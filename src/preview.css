@@ -1,0 +1,54 @@
+.preview-controls {
+  display: contents;
+}
+.preview-logs {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 8px;
+  z-index: 20;
+  max-width: min(640px, calc(100vw - 16px));
+  max-height: 40vh;
+  overflow: auto;
+  padding: 10px 12px;
+  border: 1px solid var(--app-border);
+  border-radius: 10px;
+  background: var(--app-surface);
+  color: var(--app-text);
+  font-size: 12px;
+  white-space: pre-wrap;
+  box-shadow: 0 12px 32px rgb(0 0 0 / 0.25);
+}
+.preview-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--app-background);
+}
+.preview-panel[hidden] {
+  display: none;
+}
+.preview-frame {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  border: 0;
+  background: white;
+}
+.preview-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  color: var(--app-muted);
+  padding: 24px;
+  text-align: center;
+}
+.preview-error {
+  margin: 0;
+  padding: 8px 12px;
+  background: var(--app-error);
+  color: var(--app-error-text);
+  font-size: 13px;
+}

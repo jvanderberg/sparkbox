@@ -1,0 +1,362 @@
+:root {
+  color-scheme: light;
+  --app-background: #f7f8f4;
+  --app-surface: #fffefa;
+  --app-muted-surface: #f0f2ec;
+  --app-input: #fff;
+  --app-text: #22362f;
+  --app-muted: #6f7c68;
+  --app-border: #dfe5d7;
+  --app-accent: #254e3e;
+  --app-accent-text: #fff;
+  --app-selected: #e0eaf1;
+  --app-info: #eaf0e1;
+  --app-info-text: #536747;
+  --app-warning: #f4eddb;
+  --app-warning-text: #916d33;
+  --app-error: #f9ece6;
+  --app-error-text: #a34e47;
+  --app-success: #eaf2e3;
+  --app-success-text: #477049;
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --app-background: #15181b;
+  --app-surface: #1c2024;
+  --app-muted-surface: #20252a;
+  --app-input: #171b1f;
+  --app-text: #e4e9e6;
+  --app-muted: #a1aca5;
+  --app-border: #353c40;
+  --app-accent: #a6cbb7;
+  --app-accent-text: #14251c;
+  --app-selected: #294457;
+  --app-info: #263b31;
+  --app-info-text: #b6d0bf;
+  --app-warning: #3c3222;
+  --app-warning-text: #e4c288;
+  --app-error: #402928;
+  --app-error-text: #f0aaa3;
+  --app-success: #263d31;
+  --app-success-text: #aed4b7;
+}
+:root body {
+  color: var(--app-text);
+  background: var(--app-background);
+}
+:root :is(.app-shell, .main-shell, .workspace-screen, .login-shell) {
+  color: var(--app-text);
+  background: var(--app-background);
+}
+:root :is(.sidebar, .topbar, .file-explorer, .editor-toolbar, .workspace-header, .workspace-tabs) {
+  color: var(--app-text);
+  background: var(--app-muted-surface);
+  border-color: var(--app-border);
+}
+:root
+  :is(
+    .metrics,
+    .team-card,
+    .project-card,
+    .people-list,
+    .schedule-card,
+    .readiness,
+    .modal,
+    .login-card,
+    .workspace-share-menu,
+    .file-diff,
+    .csv-view,
+    .sync-plan
+  ) {
+  color: var(--app-text);
+  background: var(--app-surface);
+  border-color: var(--app-border);
+}
+:root
+  :is(
+    .metrics,
+    .metric,
+    .identity-card,
+    .sidebar-bottom,
+    .person-row,
+    .admin-member,
+    .activity-item,
+    .modal-header,
+    .form-actions,
+    .workspace-layout,
+    .workspace-status,
+    .file-diff summary,
+    .csv-view th,
+    .csv-view td
+  ) {
+  border-color: var(--app-border);
+}
+:root
+  :is(
+    .eyebrow,
+    .muted,
+    .project-name,
+    .member-names,
+    .member-count,
+    .event-meta,
+    .page-footer,
+    .section-heading p,
+    .login-card > p,
+    .cloud-setup p,
+    .intro-strip p,
+    .email-sent p,
+    .timeline-item p,
+    .person-name span,
+    .activity-item time,
+    .checklist-item p,
+    .budget-note p,
+    .workspace-privacy,
+    .workspace-note,
+    .identity-card span:not(.avatar),
+    .explorer-empty
+  ) {
+  color: var(--app-muted);
+}
+:root
+  :is(
+    .page-heading h1,
+    .welcome h1,
+    .team-card h3,
+    .project-card h2,
+    .empty h3,
+    .checklist-item strong,
+    .person-name strong,
+    .metric > strong,
+    .modal h2,
+    .login-card h1,
+    .identity-card strong
+  ) {
+  color: var(--app-text);
+}
+:root
+  :is(
+    .event-picker select,
+    .field input,
+    .field select,
+    .field textarea,
+    .share-row input,
+    .changes-share-row input,
+    .changes-summary input
+  ) {
+  color: var(--app-text);
+  background: var(--app-input);
+  border-color: var(--app-border);
+}
+:root :is(.field input, .field textarea, .share-row input)::placeholder {
+  color: var(--app-muted);
+}
+:root .button {
+  color: var(--app-text);
+  background: var(--app-surface);
+  border-color: var(--app-border);
+}
+:root .button:hover:not(:disabled) {
+  background: var(--app-muted-surface);
+  border-color: var(--app-muted);
+}
+:root .button.primary {
+  color: var(--app-accent-text);
+  background: var(--app-accent);
+  border-color: var(--app-accent);
+}
+:root .button.primary:hover:not(:disabled) {
+  filter: brightness(1.08);
+  background: var(--app-accent);
+}
+:root
+  :is(
+    .main-nav button,
+    .workspace-screen .workspace-tabs button,
+    .new-event-link,
+    .text-link,
+    .icon-button,
+    .help-link,
+    .explorer-heading button
+  ) {
+  color: var(--app-muted);
+}
+:root
+  :is(
+    .main-nav button.active,
+    .main-nav button:not(:disabled):hover,
+    .workspace-screen .workspace-tabs button[aria-pressed="true"]
+  ) {
+  color: var(--app-info-text);
+  background: var(--app-info);
+  border-color: var(--app-accent);
+}
+:root
+  :is(
+    .intro-strip,
+    .cloud-setup,
+    .email-sent,
+    .membership-chip,
+    .team-number,
+    .count-label,
+    .nav-count,
+    .local-pill,
+    .welcome-icon
+  ) {
+  color: var(--app-info-text);
+  background: var(--app-info);
+  border-color: var(--app-border);
+}
+:root :is(.badge-neutral, .check-circle) {
+  color: var(--app-muted);
+  background: var(--app-muted-surface);
+  border-color: var(--app-border);
+}
+:root :is(.badge-green, .success, .check-circle.complete) {
+  color: var(--app-success-text);
+  background: var(--app-success);
+}
+:root :is(.badge-amber, .auth-pending) {
+  color: var(--app-warning-text);
+  background: var(--app-warning);
+}
+:root :is(.error, .global-error, .modal-error) {
+  color: var(--app-error-text);
+  background: var(--app-error);
+}
+:root .unsaved {
+  color: var(--app-warning-text);
+}
+:root .explorer-item:hover {
+  background: var(--app-muted-surface);
+}
+:root .explorer-item.selected {
+  color: var(--app-text);
+  background: var(--app-selected);
+}
+:root :is(.explorer-chevron, .explorer-icon, .explorer-heading button) {
+  color: var(--app-muted);
+}
+:root .explorer-resizer {
+  background: var(--app-border);
+}
+:root .explorer-resizer:is(:hover, :focus-visible, .resizing) {
+  background: var(--app-accent);
+}
+:root .file-explorer.collapsed {
+  border-color: var(--app-border);
+}
+:root[data-theme="dark"] :is(.csv-view th, .file-diff summary) {
+  background: var(--app-muted-surface);
+  color: var(--app-text);
+}
+:root[data-theme="dark"] :is(.live-diff, .patch-view, .file-diff pre) {
+  color: var(--app-text);
+  background: var(--app-input);
+}
+:root[data-theme="dark"] :is(.live-diff .added, .live-diff .add, .patch-line-added) {
+  color: #b7dfbf;
+  background: #203a2b;
+}
+:root[data-theme="dark"] :is(.live-diff .removed, .live-diff .delete, .patch-line-removed) {
+  color: #f0b0aa;
+  background: #402725;
+}
+:root .code-editor-host {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  background: var(--app-input);
+}
+:root .workspace-screen .sprite-terminal {
+  background: #fff;
+}
+:root[data-theme="dark"] .workspace-screen .sprite-terminal {
+  background: #1e1e1e;
+}
+.code-editor-mount {
+  position: absolute;
+  inset: 0;
+}
+.editor-loading {
+  padding: 14px;
+  color: var(--app-muted);
+  font-size: 12px;
+}
+.code-editor-fallback {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: var(--app-input);
+  color: var(--app-text);
+  padding: 12px;
+  font: 13px / 1.6 monospace;
+}
+
+:root
+  :is(
+    .form-intro,
+    .empty p,
+    .metric > p,
+    .schedule-mini time,
+    .schedule-mini span,
+    .readiness-footnote,
+    .prototype-explanation p,
+    .review-content > p,
+    .csv-view > p,
+    .settings-section dt,
+    .person-error,
+    .membership-chip button
+  ) {
+  color: var(--app-muted);
+}
+:root :is(.empty, .schedule-mini, .readiness-footnote, .prototype-explanation, .page-footer) {
+  border-color: var(--app-border);
+}
+:root .icon-button {
+  background: var(--app-muted-surface);
+}
+:root .check-circle.complete svg {
+  color: var(--app-success-text);
+}
+
+.workspace-preparation {
+  width: min(540px, calc(100% - 32px));
+  margin: 48px auto;
+  overflow-y: auto;
+  color: var(--app-text);
+}
+.workspace-preparation h2 {
+  font-size: 20px;
+  margin-bottom: 8px;
+}
+.workspace-preparation p {
+  margin: 10px 0;
+  color: var(--app-muted);
+}
+.workspace-preparation ol {
+  list-style: none;
+  padding: 0;
+  margin: 24px 0;
+}
+.workspace-preparation li {
+  display: flex;
+  gap: 16px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--app-border);
+  font-size: 14px;
+}
+.workspace-preparation li span {
+  width: 78px;
+  flex-shrink: 0;
+  color: var(--app-muted);
+  font-size: 12px;
+}
+.workspace-preparation li[data-current="true"] span {
+  color: var(--app-text);
+  font-weight: 600;
+}
+.workspace-preparation p.error {
+  color: var(--app-error-text);
+}

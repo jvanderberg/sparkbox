@@ -1,0 +1,618 @@
+/* Responsive portal and workspace adaptations; T3 chat structure stays upstream-derived. */
+.brand.site-brand {
+  align-items: flex-start;
+  font-size: 20px;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+.site-brand .brand-mark {
+  flex-shrink: 0;
+}
+.site-platform {
+  margin-top: 8px;
+  color: var(--app-muted);
+  font-size: 11px;
+}
+.login-card h1 {
+  overflow-wrap: anywhere;
+}
+body:has(.workspace-screen) {
+  height: 100dvh;
+  overflow: hidden;
+}
+.workspace-screen {
+  position: fixed;
+  top: var(--workspace-top, 0px);
+  left: 0;
+  height: var(--workspace-height, 100dvh);
+  container-type: size;
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+}
+.mobile-menu,
+.mobile-menu-content {
+  display: contents;
+}
+.mobile-menu-toggle {
+  display: none;
+}
+.workspace-header .mobile-menu-content > button:first-child {
+  order: -1;
+}
+.app-shell {
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom)
+    env(safe-area-inset-left);
+  min-height: 100dvh;
+}
+.modal {
+  max-height: 94dvh;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.modal-header {
+  flex-shrink: 0;
+  gap: 12px;
+}
+.modal-header h2,
+.workspace-header h1,
+.team-card h3,
+.person-name,
+.membership-chip,
+.project-card,
+.intro-strip > div {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.modal-header .icon-button {
+  flex-shrink: 0;
+}
+.button-row,
+.form-actions,
+.environment-controls,
+.environment-actions {
+  flex-wrap: wrap;
+}
+.editor-toolbar > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.chat-bottom {
+  flex-shrink: 1;
+  min-height: 0;
+  max-height: 75%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+@media (max-width: 650px), (max-width: 1000px) and (max-height: 500px) {
+  .workspace-header {
+    position: relative;
+    gap: 4px 8px;
+    padding: 4px 8px;
+    flex-wrap: nowrap;
+  }
+  .workspace-header h1 {
+    flex: 1;
+    font-size: 13px;
+    line-height: 1.4;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .mobile-menu {
+    display: block;
+  }
+  .mobile-menu-toggle {
+    display: inline-flex;
+    min-height: 44px;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+  }
+  .mobile-menu-content {
+    display: none;
+    position: absolute;
+    z-index: 20;
+    left: 8px;
+    right: 8px;
+    top: 100%;
+    max-height: 70cqh;
+    overflow: auto;
+    overscroll-behavior: contain;
+    padding: 12px;
+    background: var(--app-surface);
+    border: 1px solid var(--app-border);
+    border-radius: 8px;
+    box-shadow: 0 8px 24px #0003;
+  }
+  .mobile-menu[data-open="true"] > .mobile-menu-content {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+  }
+  .workspace-header .mobile-menu-content > button:first-child {
+    order: initial;
+  }
+  .workspace-header .mobile-menu-content :is(.environment-popover, .team-updates-menu) {
+    position: static;
+    width: 100%;
+    max-height: 45cqh;
+  }
+  .workspace-header > .badge {
+    font-size: 9px;
+  }
+  .workspace-header .team-updates,
+  .workspace-header .environment-controls {
+    position: static;
+  }
+  .environment-popover,
+  .team-updates-menu {
+    right: 8px;
+    left: 8px;
+    width: auto;
+    max-height: 65dvh;
+  }
+  .workspace-screen > .workspace-tabs {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    padding: 0 4px;
+    gap: 0;
+  }
+  .workspace-screen .workspace-tabs button {
+    flex: 0 0 auto;
+    padding: 8px;
+    font-size: 12px;
+    min-height: 44px;
+  }
+  .workspace-screen .workspace-layout {
+    position: relative;
+  }
+  .workspace-screen .file-explorer:not(.collapsed) {
+    position: absolute;
+    inset: 0 auto 0 0;
+    z-index: 5;
+    box-shadow: 8px 0 18px #0003;
+    max-width: 85%;
+  }
+  .workspace-screen .file-explorer:not(.collapsed) + .editor-area {
+    margin-left: 44px;
+  }
+  .workspace-screen .explorer-heading {
+    min-height: 44px;
+    padding: 0;
+  }
+  .workspace-screen .explorer-heading > span {
+    padding-left: 10px;
+  }
+  .workspace-screen .explorer-heading button {
+    width: 44px;
+    height: 44px;
+  }
+  .workspace-screen .explorer-item {
+    min-height: 44px;
+    font-size: 13px;
+  }
+  .workspace-screen .file-actions {
+    padding: 0 4px;
+  }
+  .workspace-screen .file-action {
+    flex-basis: 44px;
+    width: 44px;
+    height: 44px;
+  }
+  .workspace-screen .agent-composer textarea {
+    min-height: 28px;
+    max-height: min(180px, 25cqh);
+    overflow-y: auto;
+  }
+  .workspace-screen .agent-panel {
+    container-type: size;
+  }
+  .workspace-screen [data-chat-composer-body] {
+    padding: 8px 12px 4px;
+  }
+  .workspace-screen [data-chat-composer-footer] {
+    padding-bottom: 8px;
+  }
+  .chat-header {
+    gap: 4px;
+    padding: 0 8px;
+  }
+  .chat-header > div {
+    gap: 0;
+  }
+  .chat-readiness {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+  .chat-feedback {
+    gap: 8px;
+    overflow-wrap: anywhere;
+  }
+  .workspace-screen .agent-conversation {
+    min-height: 0;
+  }
+  .workspace-screen .workspace-panel {
+    padding: 12px;
+  }
+  .workspace-screen .agent-panel {
+    padding: 0;
+  }
+  .workspace-status {
+    padding: 6px 10px;
+    overflow-wrap: anywhere;
+  }
+  .cloud-setup,
+  .section-heading {
+    flex-wrap: wrap;
+  }
+  .cloud-setup {
+    padding: 10px;
+  }
+  .sync-plan li {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .sync-plan code,
+  .sync-plan select {
+    min-width: 0;
+    max-width: 100%;
+    overflow-wrap: anywhere;
+  }
+}
+@media (max-width: 600px) {
+  .person-name {
+    flex-basis: 170px;
+  }
+  .sidebar-bottom {
+    padding-top: 0;
+    flex-wrap: wrap;
+  }
+  .sidebar-bottom .identity-card {
+    flex: 1 1 160px;
+  }
+  .sidebar-group {
+    margin-top: 12px;
+  }
+  .sidebar-group .new-event-link {
+    margin-bottom: 8px;
+  }
+  .main-nav button {
+    flex-shrink: 0;
+  }
+  .topbar {
+    height: auto;
+    min-height: 48px;
+    gap: 8px;
+    padding-block: 8px;
+    overflow-wrap: anywhere;
+  }
+  .page-heading,
+  .page-heading > div {
+    max-width: 100%;
+  }
+  .page-heading .button-row,
+  .section-heading .button-row {
+    width: 100%;
+  }
+  .modal-header,
+  .form {
+    padding: 16px;
+  }
+  .login-shell {
+    padding: max(24px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right))
+      max(24px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+    min-height: 100dvh;
+  }
+  .login-card {
+    padding: 22px;
+  }
+  .membership-chips {
+    padding: 0 15px 15px;
+  }
+  .membership-chip {
+    max-width: 100%;
+  }
+  .membership-chip button {
+    flex-shrink: 0;
+  }
+  .settings-section dl {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+  }
+  .settings-section dd {
+    margin: 0 0 12px;
+    overflow-wrap: anywhere;
+  }
+  /* One vertical reading surface keeps history, version actions and diffs reachable
+     when a phone keyboard or landscape viewport leaves little vertical space. */
+  .repository-browser {
+    overflow-y: auto;
+  }
+  .repository-layout {
+    display: flex;
+    flex-direction: column;
+    flex: 0 0 auto;
+    overflow: visible;
+  }
+  .repository-history {
+    max-height: 28dvh;
+    flex-shrink: 0;
+  }
+  .repository-detail {
+    overflow: visible;
+  }
+  .repository-files {
+    display: flex;
+    flex-direction: column;
+  }
+  .repository-paths {
+    max-height: 24dvh;
+    border-right: 0;
+    border-bottom: 1px solid var(--app-border);
+  }
+  .repository-file-view {
+    max-height: 50dvh;
+    min-height: 160px;
+  }
+}
+/* Touch controls have useful hit areas; 16px form text avoids iOS focus zoom.
+   Monaco owns the geometry of its code surface and hidden input. */
+@media (pointer: coarse), (max-width: 650px) {
+  :root
+    :is(
+      .button,
+      .button.small,
+      .text-link,
+      .new-event-link,
+      .main-nav button,
+      .chat-header button,
+      .agent-composer button,
+      .chat-approval button,
+      .chat-connection button,
+      .t3-question-option,
+      .membership-chip button,
+      .file-diff summary
+    ) {
+    min-height: 44px;
+  }
+  :root :is(.icon-button, .membership-chip button) {
+    min-width: 44px;
+    min-height: 44px;
+  }
+  :root
+    :is(
+      .field input,
+      .field select,
+      .field textarea,
+      .event-picker select,
+      .changes-commit-row input,
+      .chat-connection input,
+      .chat-workspace-id input,
+      .chat-model select,
+      .chat-approval input,
+      .agent-composer textarea,
+      .sync-plan select
+    ) {
+    font-size: 16px;
+    min-height: 44px;
+  }
+}
+
+/* Main portal disclosure. Keep the desktop sidebar and mounted navigation. */
+.admin-entry {
+  min-height: 44px;
+  flex-shrink: 0;
+}
+@media (max-width: 650px), (max-width: 1000px) and (max-height: 500px) {
+  .app-shell {
+    display: block;
+  }
+  .sidebar {
+    position: relative;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    height: auto;
+    padding: 12px 16px;
+  }
+  .sidebar > .brand {
+    flex: 1;
+    min-width: 0;
+  }
+  .sidebar > .site-platform {
+    display: none;
+  }
+  .sidebar .mobile-menu-content {
+    max-height: 70dvh;
+    left: 8px;
+    right: 8px;
+  }
+  .sidebar .main-nav {
+    order: -1;
+    flex-direction: column;
+    margin: 0;
+    overflow: visible;
+  }
+  .sidebar .main-nav button {
+    min-height: 44px;
+    padding: 10px 12px;
+    font-size: 16px;
+    white-space: normal;
+    text-align: left;
+  }
+  .sidebar .main-nav button svg {
+    display: block;
+  }
+  .sidebar .sidebar-group {
+    margin: 0;
+  }
+  .sidebar .new-event-link {
+    display: flex;
+    min-height: 44px;
+    align-items: center;
+  }
+  .sidebar .sidebar-bottom {
+    display: flex;
+    position: static;
+    margin: 0;
+    padding: 0;
+  }
+  .sidebar .sidebar-bottom .identity-card {
+    flex: 1;
+  }
+}
+
+.sprite-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
+  gap: 16px;
+  margin-block: 16px;
+}
+.sprite-card {
+  padding: 16px;
+  border: 1px solid var(--app-border);
+  border-radius: 8px;
+  min-width: 0;
+  background: var(--app-surface);
+}
+.sprite-card code,
+.sprite-card dd {
+  overflow-wrap: anywhere;
+}
+.sprite-card dl {
+  margin-block: 16px;
+}
+.sprite-card dt {
+  font-size: 12px;
+  color: var(--app-muted);
+  margin-top: 10px;
+}
+.sprite-card dd {
+  margin: 0;
+  font-size: 14px;
+}
+.sprite-inventory summary {
+  cursor: pointer;
+  min-height: 44px;
+  padding-block: 12px;
+}
+.pause-banner {
+  padding: 16px;
+  border: 1px solid var(--app-border);
+  border-radius: 8px;
+  background: var(--app-surface);
+}
+
+.modal-body {
+  padding: 20px;
+}
+
+.admin-branch > button {
+  width: 100%;
+}
+.admin-disclosure {
+  margin-left: auto;
+}
+.admin-branch > button[aria-expanded="false"] .admin-disclosure {
+  transform: rotate(-90deg);
+}
+.sidebar .admin-nav {
+  border-left: 1px solid var(--app-border);
+  padding-left: 12px;
+  margin: 4px 0 0 20px;
+}
+.admin-nav[hidden] {
+  display: none;
+}
+.admin-heading {
+  margin-bottom: 16px;
+}
+.admin-nav button {
+  min-height: 44px;
+}
+.admin-shortcuts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.modal:has(.project-editor) {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.project-editor {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 0;
+}
+.project-editor-fields {
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 16px 24px;
+}
+.project-editor .form-actions {
+  flex-shrink: 0;
+  margin: 0;
+  padding: 12px 24px;
+  border-top: 1px solid var(--app-border);
+}
+.project-editor-fields .field {
+  margin-block: 16px;
+}
+.project-editor-fields textarea {
+  resize: vertical;
+  height: min(240px, 30dvh);
+  min-height: 80px;
+}
+
+@media (min-width: 651px) and (min-height: 501px), (min-width: 1001px) {
+  .sidebar {
+    overflow-y: auto;
+  }
+}
+
+.schedule-editor-row {
+  min-width: 0;
+  margin: 16px 0;
+  padding: 12px;
+  border: 1px solid var(--app-border);
+  border-radius: 6px;
+}
+.event-description {
+  max-height: 12rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.project-editor-fields .schedule-editor-row textarea {
+  height: 6rem;
+}
+.timeline-item time {
+  width: clamp(4.5rem, 15vw, 7rem);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.timeline-item > div {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.timeline-item p {
+  white-space: pre-wrap;
+  max-height: 16rem;
+  overflow: auto;
+}
+.event-meta span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.event-meta svg {
+  flex-shrink: 0;
+}

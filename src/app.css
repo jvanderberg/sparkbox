@@ -1,0 +1,92 @@
+.home {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 32px 20px 64px;
+  display: grid;
+  gap: 20px;
+}
+.home-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+.home-header h1 {
+  margin: 0 0 4px;
+  font-size: 28px;
+}
+.home-header p {
+  margin: 0;
+  color: var(--app-muted);
+}
+.home-card {
+  background: var(--app-surface);
+  border: 1px solid var(--app-border);
+  border-radius: 14px;
+  padding: 20px;
+}
+.home-card h2 {
+  margin: 0 0 12px;
+  font-size: 17px;
+}
+.home-notice {
+  margin: 0;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: var(--app-info);
+  color: var(--app-info-text);
+}
+.home .muted,
+.modal-body .muted {
+  color: var(--app-muted);
+  font-size: 13px;
+}
+.project-list {
+  list-style: none;
+  margin: 0 0 16px;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+.project-list li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.project-open {
+  flex: 1;
+  text-align: left;
+  font: inherit;
+  font-weight: 600;
+  padding: 12px 14px;
+  min-height: 44px;
+  border-radius: 10px;
+  border: 1px solid var(--app-border);
+  background: var(--app-muted-surface);
+  color: var(--app-text);
+  cursor: pointer;
+}
+.project-open:hover {
+  border-color: var(--app-accent);
+}
+.project-create {
+  display: flex;
+  gap: 8px;
+}
+.project-create input {
+  flex: 1;
+  min-height: 44px;
+  font-size: 16px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--app-border);
+  background: var(--app-input);
+  color: var(--app-text);
+}
+.home-list {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 6px;
+  color: var(--app-text);
+}
