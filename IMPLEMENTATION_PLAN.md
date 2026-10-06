@@ -12,6 +12,10 @@ Status as of 2026-10-05. Prototype only.
 - [x] Projects home, settings (preview origin, WISP relay), starter template.
 - [x] Unit tests: patch parser/applier, tools, changes diffing, runner sequence/queue/stop/failure. Browser smoke on desktop and a Pixel 7 profile in dark mode.
 
+- [x] Preview can load CDN libraries and map tiles (2026-10-06): the SDK service worker forwarded every request into the sandbox and forced `require-corp` on the preview document; both are patched in the Vite plugin, verified by the browser smoke (fetch, dynamic import, classic script) and a live OpenRouter Leaflet turn.
+- [x] Runtime recovery: a dead Wasmer scheduler triggers a sandbox rebuild from the in-memory files, with the preview reset. Files are also flushed to IndexedDB after every agent turn and when the tab is hidden.
+- [x] Page errors from the preview are captured through an injected reporter and shown in the panel and the agent prompt. grep, sed and ripgrep added; guidance lists what exists.
+
 ## Not done
 
 - [x] Anthropic adapter verified live on 2026-10-05 with Opus 5.5 (`npm run test:live:anthropic`): bash and text-editor tools, streamed reply, preview, changes and transcript restore after reload. Fixed a doubled-delta bug from a StrictMode double subscription.
@@ -23,4 +27,6 @@ Status as of 2026-10-05. Prototype only.
 - [ ] A deployed demo with two hostnames (app and preview host).
 - [ ] Remove the leftover Civic Spark portal CSS from `src/styles.css` and the unused `claude`/`opencode` provider names in `src/agents/protocol.ts`.
 - [ ] Preview for projects that run their own dev server (expose any listening port; partly there through "Show port N").
+- [ ] Reproduce the "Scheduler is dead" crash deliberately to confirm the automatic rebuild path end to end; today it is covered by code review and the recovery wrapper only.
+- [ ] Explain blocked network requests in the preview (which host, why) instead of a generic module error.
 - [ ] Questions from the agent to the user (the timeline supports approval events; no provider wiring yet).

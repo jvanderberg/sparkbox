@@ -16,6 +16,36 @@ const isolation = {
 };
 
 /**
+ * Two adjustments to the SDK's service worker (0.19.0):
+ * 1. It forwards every request from the preview page into the guest, including
+ *    cross-origin ones such as CDN scripts and map tiles, which then 404 inside
+ *    the sandbox. Only same-origin requests belong to the guest.
+ * 2. It sets Cross-Origin-Embedder-Policy: require-corp on guest responses,
+ *    which blocks plain <script> and <img> loads from hosts without CORP
+ *    headers inside the preview. A child of a require-corp page must itself
+ *    carry a COEP, so the header cannot be dropped; `credentialless` keeps
+ *    the embedding valid while allowing credential-free cross-origin loads.
+ *    Safari lacks credentialless, so guidance also asks for `crossorigin`
+ *    attributes on CDN tags.
+ * Each replacement asserts its anchor so an SDK upgrade fails loudly here.
+ */
+function patchServiceWorker(source: string) {
+  const replace = (from: string, to: string) => {
+    if (!source.includes(from)) throw new Error(`service worker patch anchor missing: ${from}`);
+    source = source.replace(from, to);
+  };
+  replace(
+    'if (url.pathname.startsWith("/.wasmer/"))\n        return;',
+    'if (url.origin !== self.location.origin || url.pathname.startsWith("/.wasmer/"))\n        return;',
+  );
+  replace(
+    '    headers.set("cross-origin-embedder-policy", "require-corp");\n    headers.set("cross-origin-opener-policy", "same-origin");\n    // The HTTP host',
+    '    headers.set("cross-origin-embedder-policy", "credentialless");\n    headers.set("cross-origin-opener-policy", "same-origin");\n    // The HTTP host',
+  );
+  return source;
+}
+
+/**
  * The preview host. Guest HTTP servers are reached through a service worker on
  * a second origin: `/wasmer-service-worker.js` plus the control document at
  * `/.wasmer/host.html`. Both scripts come from @wasmer/sdk unchanged. The same
@@ -28,7 +58,7 @@ function previewHost(): Plugin {
   const distRoot = dirname(require.resolve("@wasmer/sdk/browser"));
   const read = (name: string) => readFileSync(join(distRoot, name), "utf8");
   const files = () => ({
-    "wasmer-service-worker.js": read("service-worker.js"),
+    "wasmer-service-worker.js": patchServiceWorker(read("service-worker.js")),
     ".wasmer/host.js": read("service-worker-host.js"),
     ".wasmer/host.html":
       '<!doctype html><meta charset="utf-8"><title>Sparkbox preview host</title><script type="module" src="/.wasmer/host.js"></script>',

@@ -27,6 +27,9 @@ export function usePreview(sandbox: WasmerSandbox | null, origin: string) {
   const [logs, setLogs] = useState("");
   const [error, setError] = useState("");
   const [ports, setPorts] = useState<number[]>([]);
+  const [pageErrors, setPageErrors] = useState<string[]>([]);
+  const pageErrorsRef = useRef<string[]>([]);
+  pageErrorsRef.current = pageErrors;
   const process = useRef<Process | null>(null);
   const closeServer = useRef<(() => Promise<void>) | null>(null);
 
@@ -37,6 +40,40 @@ export function usePreview(sandbox: WasmerSandbox | null, origin: string) {
       (port) => setPorts((known) => known.filter((entry) => entry !== port)),
     );
   }, [sandbox]);
+
+  // The runtime can die mid-session; it rebuilds itself, and the preview
+  // server with it is gone until started again.
+  useEffect(() => {
+    if (!sandbox) return;
+    return sandbox.onRestart(() => {
+      process.current = null;
+      closeServer.current = null;
+      setUrl("");
+      setRunning(false);
+      setPorts([]);
+      setError("The sandbox runtime restarted. Start the preview again.");
+    });
+  }, [sandbox]);
+
+  // Errors reported by the page through the injected reporter script.
+  useEffect(() => {
+    if (!origin) return;
+    let expected = "";
+    try {
+      expected = new URL(origin).origin;
+    } catch {
+      return;
+    }
+    const listener = (event: MessageEvent) => {
+      if (event.origin !== expected) return;
+      const data = event.data as { type?: string; message?: string; href?: string } | null;
+      if (data?.type !== "sparkbox:page-error" || typeof data.message !== "string") return;
+      const line = `${data.href && data.href !== "/" ? `${data.href}: ` : ""}${data.message}`;
+      setPageErrors((previous) => [...previous.slice(-49), line]);
+    };
+    window.addEventListener("message", listener);
+    return () => window.removeEventListener("message", listener);
+  }, [origin]);
 
   async function expose(port: number) {
     if (!sandbox) return;
@@ -61,6 +98,7 @@ export function usePreview(sandbox: WasmerSandbox | null, origin: string) {
     setStarting(true);
     setError("");
     setLogs("");
+    setPageErrors([]);
     try {
       await sandbox.writeFile(".sparkbox/serve.mjs", serveScript);
       const started = await sandbox.start(`node .sparkbox/serve.mjs ${previewPort}`, (chunk) =>
@@ -94,7 +132,21 @@ export function usePreview(sandbox: WasmerSandbox | null, origin: string) {
     setRunning(false);
   }
 
-  return { url, running, starting, logs, error, ports, start, stop, expose };
+  return {
+    url,
+    running,
+    starting,
+    logs,
+    error,
+    ports,
+    pageErrors,
+    /** Stable accessor for the agent's prompt. */
+    recentPageErrors: () => pageErrorsRef.current,
+    clearPageErrors: () => setPageErrors([]),
+    start,
+    stop,
+    expose,
+  };
 }
 
 export function PreviewControls({
@@ -163,6 +215,7 @@ export function PreviewControls({
       {logsOpen && (
         <pre className="preview-logs" role="log" aria-label="Preview server logs">
           {preview.logs || "No output yet."}
+          {preview.pageErrors.length > 0 && `\n\nPage errors:\n${preview.pageErrors.join("\n")}`}
         </pre>
       )}
     </div>
@@ -182,6 +235,19 @@ export function PreviewPanel({
         <p className="preview-error" role="alert">
           {preview.error}
         </p>
+      )}
+      {preview.pageErrors.length > 0 && (
+        <div className="preview-page-errors" role="status">
+          <span>
+            {preview.pageErrors.length === 1
+              ? "1 page error"
+              : `${preview.pageErrors.length} page errors`}
+            : {preview.pageErrors[preview.pageErrors.length - 1]}
+          </span>
+          <button type="button" onClick={preview.clearPageErrors} aria-label="Clear page errors">
+            Clear
+          </button>
+        </div>
       )}
       {preview.url ? (
         <iframe

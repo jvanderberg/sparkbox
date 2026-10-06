@@ -52,3 +52,29 @@
   color: var(--app-error-text);
   font-size: 13px;
 }
+.preview-page-errors {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 12px;
+  background: var(--app-warning);
+  color: var(--app-warning-text);
+  font-size: 13px;
+}
+.preview-page-errors span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.preview-page-errors button {
+  font: inherit;
+  min-height: 32px;
+  padding: 0 10px;
+  border-radius: 8px;
+  border: 1px solid currentColor;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { completeOpenRouterLogin } from "./agent/openrouter-auth.ts";
 import { AgentRunner } from "./agent/runner.ts";
 import { settings } from "./agent/settings.ts";
@@ -238,6 +238,8 @@ function ProjectSession({
   const [error, setError] = useState("");
   const origin = settings.previewOrigin() || defaultPreviewOrigin();
   const preview = usePreview(sandbox, origin);
+  const recentPageErrors = useRef(preview.recentPageErrors);
+  recentPageErrors.current = preview.recentPageErrors;
 
   useEffect(() => {
     let active = true;
@@ -251,8 +253,8 @@ function ProjectSession({
       },
     })
       .then((instance) => {
+        if (!active) return void instance.close({ persist: false });
         created = instance;
-        if (!active) return void instance.close();
         setSandbox(instance);
         setRunner(
           new AgentRunner({
@@ -260,6 +262,7 @@ function ProjectSession({
             sandbox: instance,
             networkEnabled: () => Boolean(settings.wispUrl()),
             previewPort,
+            previewErrors: () => recentPageErrors.current(),
           }),
         );
       })
@@ -267,10 +270,15 @@ function ProjectSession({
         if (active) setError(cause.message);
       });
     const persist = () => void created?.persist();
+    const hidden = () => {
+      if (document.visibilityState === "hidden") persist();
+    };
     window.addEventListener("pagehide", persist);
+    document.addEventListener("visibilitychange", hidden);
     return () => {
       active = false;
       window.removeEventListener("pagehide", persist);
+      document.removeEventListener("visibilitychange", hidden);
       void created?.close();
     };
   }, [project.id, project.name]);

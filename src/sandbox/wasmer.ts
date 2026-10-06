@@ -13,7 +13,13 @@ import {
   type Sandbox,
 } from "./types.ts";
 
-export const sandboxPackages = ["wasmer/bash", "wasmer/edgejs@0.2.5"] as const;
+export const sandboxPackages = [
+  "wasmer/bash",
+  "wasmer/edgejs@0.2.5",
+  "wasmer/grep@3.12.0",
+  "wasmer/sed@4.9.0",
+  "wasmer/ripgrep@15.2.1",
+] as const;
 
 export type SandboxProgress = {
   phase: "runtime" | "resolving" | "downloading" | "loading" | "restoring" | "ready";
@@ -34,6 +40,16 @@ export type WasmerSandboxOptions = {
 
 export type PreviewServer = { port: number; url: string; close: () => Promise<void> };
 
+/** The SDK's worker pool can die; commands then fail until the sandbox is rebuilt. */
+export function isDeadRuntime(error: unknown) {
+  const message = error instanceof Error ? `${error.name} ${error.message}` : String(error);
+  return /Scheduler is dead|thread pool is shut down|WORKER_FAILED|CLIENT_CLOSED|SANDBOX_CLOSED/i.test(
+    message,
+  );
+}
+
+type Boot = { client: WasmerClient; handle: WasmerSandboxHandle };
+
 /**
  * A Wasmer WASIX sandbox running inside the page. `/workspace` holds the
  * project; it is mirrored to IndexedDB so reloads keep the files.
@@ -41,15 +57,19 @@ export type PreviewServer = { port: number; url: string; close: () => Promise<vo
 export class WasmerSandbox implements Sandbox {
   readonly root = "/workspace";
   private listeners = new Set<() => void>();
+  private restartListeners = new Set<() => void>();
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
   private saving: Promise<void> | null = null;
+  private restarting: Promise<void> | null = null;
   private processes = new Set<Process>();
   private servers = new Map<number, BrowserServer>();
+  private closed = false;
   private constructor(
     private client: WasmerClient,
     private handle: WasmerSandboxHandle,
     readonly workspace: string,
     readonly restored: boolean,
+    private wispUrl: string | undefined,
   ) {}
 
   static async create(options: WasmerSandboxOptions): Promise<WasmerSandbox> {
@@ -57,20 +77,37 @@ export class WasmerSandbox implements Sandbox {
       throw new Error(
         "This page is not cross-origin isolated. The sandbox needs the Cross-Origin-Opener-Policy and Cross-Origin-Embedder-Policy headers.",
       );
-    const { Wasmer } = await import("@wasmer/sdk/browser");
     options.onProgress?.({ phase: "runtime" });
-    const client = new Wasmer({ cache: { namespace: "sparkbox" } });
-    await client.ready();
     const snapshot = await loadSnapshot(options.workspace);
     const files: Record<string, string | Uint8Array> = snapshot
       ? { ...snapshot.files }
       : { ...(options.template ?? {}) };
-    options.onProgress?.({ phase: "resolving" });
+    const boot = await WasmerSandbox.boot(files, options.wispUrl, options.onProgress);
+    options.onProgress?.({ phase: snapshot ? "restoring" : "ready" });
+    options.onProgress?.({ phase: "ready" });
+    return new WasmerSandbox(
+      boot.client,
+      boot.handle,
+      options.workspace,
+      Boolean(snapshot),
+      options.wispUrl,
+    );
+  }
+
+  private static async boot(
+    files: Record<string, string | Uint8Array>,
+    wispUrl: string | undefined,
+    onProgress?: (progress: SandboxProgress) => void,
+  ): Promise<Boot> {
+    const { Wasmer } = await import("@wasmer/sdk/browser");
+    const client = new Wasmer({ cache: { namespace: "sparkbox" } });
+    await client.ready();
+    onProgress?.({ phase: "resolving" });
     // Edge.js depends on wasmer/bash too, so qualify the shell by package to
     // avoid an ambiguous `bash` selector.
     const bash = await client.packages.load(sandboxPackages[0]);
     const handle = await client.sandboxes.create({
-      packages: [bash, sandboxPackages[1]],
+      packages: [bash, ...sandboxPackages.slice(1)],
       shell: bash.command("bash"),
       files,
       env: {
@@ -80,9 +117,9 @@ export class WasmerSandbox implements Sandbox {
         CI: "1",
         npm_config_update_notifier: "false",
       },
-      network: options.wispUrl ? { mode: "wisp", url: options.wispUrl } : { mode: "http" },
+      network: wispUrl ? { mode: "wisp", url: wispUrl } : { mode: "http" },
       onPackageProgress: (progress) => {
-        options.onProgress?.({
+        onProgress?.({
           phase: progress.phase,
           downloadedBytes: progress.download.downloadedBytes,
           totalBytes: progress.download.totalBytes,
@@ -91,9 +128,53 @@ export class WasmerSandbox implements Sandbox {
         });
       },
     });
-    options.onProgress?.({ phase: snapshot ? "restoring" : "ready" });
-    options.onProgress?.({ phase: "ready" });
-    return new WasmerSandbox(client, handle, options.workspace, Boolean(snapshot));
+    return { client, handle };
+  }
+
+  /** Rebuild the runtime after its worker pool died, keeping the files. */
+  async restart() {
+    if (this.restarting) return this.restarting;
+    this.restarting = (async () => {
+      let files: Record<string, Uint8Array> = {};
+      try {
+        files = await this.snapshot();
+      } catch {
+        files = (await loadSnapshot(this.workspace))?.files ?? {};
+      }
+      for (const server of this.servers.values()) await server.close().catch(() => {});
+      this.servers.clear();
+      this.processes.clear();
+      await this.handle.close().catch(() => {});
+      await this.client.close().catch(() => {});
+      const boot = await WasmerSandbox.boot(files, this.wispUrl);
+      this.client = boot.client;
+      this.handle = boot.handle;
+      for (const listener of this.restartListeners) listener();
+      this.changed();
+    })().finally(() => {
+      this.restarting = null;
+    });
+    return this.restarting;
+  }
+
+  /** Called after an automatic restart; preview servers are gone by then. */
+  onRestart(listener: () => void) {
+    this.restartListeners.add(listener);
+    return () => {
+      this.restartListeners.delete(listener);
+    };
+  }
+
+  /** Run `fn`, rebuilding the runtime once if it has died. */
+  private async recover<T>(fn: () => Promise<T>): Promise<T> {
+    if (this.restarting) await this.restarting;
+    try {
+      return await fn();
+    } catch (error) {
+      if (this.closed || !isDeadRuntime(error)) throw error;
+      await this.restart();
+      return await fn();
+    }
   }
 
   private absolute(path: string) {
@@ -101,20 +182,21 @@ export class WasmerSandbox implements Sandbox {
   }
 
   async exec(command: string, options: ExecOptions = {}): Promise<ExecResult> {
-    const process = await this.handle.shell(command, { cwd: this.root, env: options.env }).spawn({
-      stdin: "closed",
-      stdout: "pipe",
-      stderr: "pipe",
-      timeoutMs: options.timeoutMs ?? 120_000,
-    });
+    const process = await this.recover(() =>
+      this.handle.shell(command, { cwd: this.root, env: options.env }).spawn({
+        stdin: "closed",
+        stdout: "pipe",
+        stderr: "pipe",
+        timeoutMs: options.timeoutMs ?? 120_000,
+      }),
+    );
     this.processes.add(process);
     const abort = () => void process.kill();
     options.signal?.addEventListener("abort", abort, { once: true });
-    const decoder = () => new TextDecoder();
     const collect = async (stream: typeof process.stdout, name: "stdout" | "stderr") => {
       let text = "";
       if (!stream) return text;
-      const decode = decoder();
+      const decode = new TextDecoder();
       for await (const chunk of stream) {
         const piece = decode.decode(chunk, { stream: true });
         text += piece;
@@ -142,46 +224,50 @@ export class WasmerSandbox implements Sandbox {
   }
 
   readFile(path: string) {
-    return this.handle.fs.readFile(this.absolute(path));
+    return this.recover(() => this.handle.fs.readFile(this.absolute(path)));
   }
   readText(path: string) {
-    return this.handle.fs.readText(this.absolute(path));
+    return this.recover(() => this.handle.fs.readText(this.absolute(path)));
   }
   async writeFile(path: string, data: Uint8Array | string) {
-    const directory = path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
-    if (directory) await this.handle.fs.mkdir(this.absolute(directory), { recursive: true });
-    await this.handle.fs.writeFile(this.absolute(path), data);
+    await this.recover(async () => {
+      const directory = path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
+      if (directory) await this.handle.fs.mkdir(this.absolute(directory), { recursive: true });
+      await this.handle.fs.writeFile(this.absolute(path), data);
+    });
     this.changed();
   }
   async deleteFile(path: string) {
-    await this.handle.fs.remove(this.absolute(path), { recursive: true });
+    await this.recover(() => this.handle.fs.remove(this.absolute(path), { recursive: true }));
     this.changed();
   }
   async exists(path: string) {
     try {
-      await this.handle.fs.stat(this.absolute(path));
+      await this.recover(() => this.handle.fs.stat(this.absolute(path)));
       return true;
     } catch {
       return false;
     }
   }
   async mkdir(path: string) {
-    await this.handle.fs.mkdir(this.absolute(path), { recursive: true });
+    await this.recover(() => this.handle.fs.mkdir(this.absolute(path), { recursive: true }));
     this.changed();
   }
-  async listFiles() {
-    const files: string[] = [];
-    const walk = async (relative: string) => {
-      const entries = await this.handle.fs.readDir(this.absolute(relative));
-      for (const entry of entries) {
-        const path = relative ? `${relative}/${entry.name}` : entry.name;
-        if (entry.kind === "directory") {
-          if (!ignoredDirectories.has(entry.name)) await walk(path);
-        } else files.push(path);
-      }
-    };
-    await walk("");
-    return files.sort();
+  listFiles() {
+    return this.recover(async () => {
+      const files: string[] = [];
+      const walk = async (relative: string) => {
+        const entries = await this.handle.fs.readDir(this.absolute(relative));
+        for (const entry of entries) {
+          const path = relative ? `${relative}/${entry.name}` : entry.name;
+          if (entry.kind === "directory") {
+            if (!ignoredDirectories.has(entry.name)) await walk(path);
+          } else files.push(path);
+        }
+      };
+      await walk("");
+      return files.sort();
+    });
   }
   subscribe(listener: () => void) {
     this.listeners.add(listener);
@@ -210,6 +296,9 @@ export class WasmerSandbox implements Sandbox {
     });
     await this.saving;
   }
+  flush() {
+    return this.persist();
+  }
 
   private changed() {
     for (const listener of this.listeners) listener();
@@ -225,9 +314,11 @@ export class WasmerSandbox implements Sandbox {
     command: string,
     onOutput: (chunk: string) => void,
   ): Promise<{ process: Process; done: Promise<number> }> {
-    const process = await this.handle
-      .shell(command, { cwd: this.root })
-      .spawn({ stdin: "closed", stdout: "pipe", stderr: "pipe" });
+    const process = await this.recover(() =>
+      this.handle
+        .shell(command, { cwd: this.root })
+        .spawn({ stdin: "closed", stdout: "pipe", stderr: "pipe" }),
+    );
     this.processes.add(process);
     const pump = async (stream: typeof process.stdout) => {
       if (!stream) return;
@@ -249,9 +340,17 @@ export class WasmerSandbox implements Sandbox {
     return this.handle.ports.wait(port, { timeoutMs });
   }
 
-  /** Watch for guest listeners. */
+  /** Watch for guest listeners. Re-attached automatically after a restart. */
   onListen(listener: (port: number) => void, onClose?: (port: number) => void) {
-    return this.handle.ports.onListen(listener, { onClose });
+    let detach = this.handle.ports.onListen(listener, { onClose });
+    const reattach = () => {
+      detach = this.handle.ports.onListen(listener, { onClose });
+    };
+    this.restartListeners.add(reattach);
+    return () => {
+      detach();
+      this.restartListeners.delete(reattach);
+    };
   }
 
   /** Expose a guest port through the preview host origin. */
@@ -269,11 +368,17 @@ export class WasmerSandbox implements Sandbox {
     await server?.close();
   }
 
-  async close() {
+  /**
+   * Shut down. `persist` is false when this instance never became the live
+   * one (React StrictMode mounts twice), so a stale copy never overwrites
+   * the files the live instance is still editing.
+   */
+  async close({ persist = true } = {}) {
+    this.closed = true;
     for (const server of this.servers.values()) await server.close().catch(() => {});
     this.servers.clear();
     for (const process of this.processes) await process.kill().catch(() => {});
-    await this.persist().catch(() => {});
+    if (persist) await this.persist().catch(() => {});
     await this.handle.close().catch(() => {});
     await this.client.close().catch(() => {});
   }

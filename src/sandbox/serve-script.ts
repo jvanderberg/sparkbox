@@ -31,6 +31,23 @@ const types = {
   ".woff": "font/woff",
 };
 
+// Pages report runtime errors to the Sparkbox tab, which shows them in the
+// Preview panel and passes them to the agent. Injected into HTML responses.
+const reporter =
+  "<script>(function(){" +
+  "function send(message){try{parent.postMessage({type:'sparkbox:page-error',message:String(message).slice(0,2000),href:location.pathname},'*')}catch(e){}}" +
+  "window.addEventListener('error',function(e){var t=e.target;" +
+  "if(t&&t!==window&&t.tagName){send('Failed to load '+t.tagName.toLowerCase()+' '+(t.src||t.href||''));return}" +
+  "send((e.message||'Error')+(e.filename?' ('+e.filename.replace(location.origin,'')+':'+e.lineno+')':''))},true);" +
+  "window.addEventListener('unhandledrejection',function(e){var r=e.reason;send('Unhandled promise rejection: '+(r&&r.message||r))});" +
+  "var original=console.error;console.error=function(){send(Array.prototype.map.call(arguments,function(a){return a&&a.message||(typeof a==='object'?JSON.stringify(a):String(a))}).join(' '));original.apply(console,arguments)};" +
+  "})();</script>";
+
+function withReporter(html) {
+  const index = html.search(/<\\/body>/i);
+  return index >= 0 ? html.slice(0, index) + reporter + html.slice(index) : html + reporter;
+}
+
 function resolve(urlPath) {
   const clean = decodeURIComponent(urlPath.split("?")[0]).replace(/\\0/g, "");
   const target = path.normalize(path.join(root, clean));
@@ -56,9 +73,13 @@ http
           return;
         }
       }
-      const data = fs.readFileSync(target);
+      const extension = path.extname(target).toLowerCase();
+      const data =
+        extension === ".html"
+          ? Buffer.from(withReporter(fs.readFileSync(target, "utf8")))
+          : fs.readFileSync(target);
       response.writeHead(200, {
-        "content-type": types[path.extname(target).toLowerCase()] || "application/octet-stream",
+        "content-type": types[extension] || "application/octet-stream",
         "cache-control": "no-store",
       });
       response.end(data);

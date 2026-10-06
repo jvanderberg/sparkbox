@@ -57,8 +57,12 @@ if (model) {
   await page.getByRole("button", { name: "Agent connection settings" }).click();
 }
 
+const scenario = process.env.SPARKBOX_SCENARIO ?? "edit";
 const prompt =
-  "Change the page heading to 'Hello from Sparkbox', add a short paragraph under it that explains the page was edited by an agent running in the browser, and run `ls -la` so I can see the project files. Reply in two sentences.";
+  scenario === "map"
+    ? "Replace this page with a Leaflet map of Oak Park, Illinois centered on 41.885, -87.785 at zoom 13, with OpenStreetMap tiles and one marker on the village hall. Load Leaflet from a CDN. Keep the page heading as an h1 that says 'Oak Park map'. Reply in two sentences."
+    : "Change the page heading to 'Hello from Sparkbox', add a short paragraph under it that explains the page was edited by an agent running in the browser, and run `ls -la` so I can see the project files. Reply in two sentences.";
+const expectedHeading = scenario === "map" ? "Oak Park map" : "Hello from Sparkbox";
 await page.getByLabel("Message to agent").fill(prompt);
 await page.getByLabel("Message to agent").press("Enter");
 const stop = page.getByRole("button", { name: "Stop generation" });
@@ -87,7 +91,7 @@ await page.screenshot({ path: `artifacts/${label}-editor.png` });
 const editorText = await page.locator(".monaco-editor .view-lines").first().innerText();
 console.log(
   "editor shows new heading:",
-  /Hello from Sparkbox/.test(editorText.replaceAll("\u00a0", " ")),
+  editorText.replaceAll("\u00a0", " ").includes(expectedHeading),
 );
 await tabs.getByRole("button", { name: "Changes" }).click();
 await page.locator(".file-diff").first().waitFor({ timeout: 20_000 });
@@ -99,19 +103,25 @@ const frame = page.locator("iframe.preview-frame");
 await frame.waitFor({ timeout: 180_000 });
 await frame
   .contentFrame()
-  .getByRole("heading", { name: "Hello from Sparkbox" })
+  .getByRole("heading", { name: expectedHeading })
   .waitFor({ timeout: 60_000 });
 await page.screenshot({ path: `artifacts/${label}-preview.png` });
+if (scenario === "map") {
+  await frame
+    .contentFrame()
+    .locator(".leaflet-container .leaflet-tile-loaded")
+    .first()
+    .waitFor({ timeout: 60_000 });
+  console.log("preview shows a Leaflet map with loaded tiles");
+}
+await page.waitForTimeout(1500);
 console.log("preview shows the new heading");
+console.log("page errors shown:", await page.locator(".preview-page-errors").allTextContents());
 // Reload: transcript and files must come back.
 await page.reload();
 await page.getByText("Sandbox ready").waitFor({ state: "attached", timeout: 180_000 });
 await tabs.getByRole("button", { name: "Agent" }).click();
-await page
-  .locator(".chat-thread")
-  .getByText("Hello from Sparkbox")
-  .first()
-  .waitFor({ timeout: 20_000 });
+await page.locator(".chat-thread").getByText(expectedHeading).first().waitFor({ timeout: 20_000 });
 console.log("transcript restored after reload");
 await browser.close();
 if (errors.length) console.log("console errors:\n" + errors.join("\n"));

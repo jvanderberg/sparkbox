@@ -35,6 +35,8 @@ export interface Sandbox {
   listFiles(): Promise<string[]>;
   /** Fires after any write made through this interface or by a command. */
   subscribe(listener: () => void): () => void;
+  /** Persist now, if the implementation persists at all. */
+  flush?(): Promise<void>;
 }
 
 export const ignoredDirectories = new Set([
@@ -46,6 +48,10 @@ export const ignoredDirectories = new Set([
   ".pnpm-store",
   ".wasmer",
   ".sparkbox",
+  ".npm",
+  ".pnpm",
+  ".config",
+  ".local",
 ]);
 
 export function isIgnoredPath(path: string) {

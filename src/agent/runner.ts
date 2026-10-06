@@ -35,6 +35,8 @@ export type RunnerOptions = {
   sandbox: Sandbox;
   networkEnabled: () => boolean;
   previewPort: number;
+  /** Errors the preview page reported since it was started, oldest first. */
+  previewErrors?: () => string[];
   /** Test seam: build a session instead of reading saved keys. */
   createSession?: (provider: ProviderId, model: string) => ProviderSession;
 };
@@ -204,6 +206,7 @@ export class AgentRunner {
         networkEnabled: this.options.networkEnabled(),
         previewPort: this.options.previewPort,
         projectBrief: brief?.slice(0, 8000),
+        previewErrors: this.options.previewErrors?.() ?? [],
       });
       await session.run(
         { text: message.text, images: message.images },
@@ -241,6 +244,8 @@ export class AgentRunner {
         });
       }
     } finally {
+      // Files written during the turn must outlive a reload or a runtime crash.
+      void this.options.sandbox.flush?.().catch(() => {});
       this.current = null;
       this.stopping = false;
       this.workingStartedAt = undefined;
