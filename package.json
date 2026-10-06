@@ -16,7 +16,9 @@
     "test": "vitest run",
     "check": "npm run lint && npm run typecheck && npm test && npm run build",
     "test:browser": "tsx scripts/browser-smoke.ts",
-    "test:live:anthropic": "tsx scripts/live-anthropic.ts"
+    "test:live:anthropic": "tsx scripts/live-turn.ts anthropic",
+    "test:live:openai": "tsx scripts/live-turn.ts openai",
+    "test:live:openrouter": "tsx scripts/live-turn.ts openrouter"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.131.0",

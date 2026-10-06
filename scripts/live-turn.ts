@@ -1,18 +1,34 @@
 /**
- * One paid Claude turn through the real UI. Explicit opt-in only:
+ * One paid model turn through the real UI. Explicit opt-in only:
  *
  *   SPARKBOX_ANTHROPIC_KEY=sk-ant-… npm run test:live:anthropic
+ *   SPARKBOX_OPENAI_KEY=sk-…        npm run test:live:openai
+ *   SPARKBOX_OPENROUTER_KEY=sk-or-… npm run test:live:openrouter
  *
  * The key is typed into the test browser's ephemeral profile and never
- * printed. Requires `npm run dev` on 127.0.0.1:4320.
+ * printed. SPARKBOX_MODEL overrides the provider's default model.
+ * Requires `npm run dev` on 127.0.0.1:4320.
  */
 import { mkdirSync } from "node:fs";
 import { chromium } from "playwright";
 
-const key = process.env.SPARKBOX_ANTHROPIC_KEY;
-if (!key) throw new Error("Set SPARKBOX_ANTHROPIC_KEY");
+const providerArg = process.argv[2] ?? "anthropic";
+const providers = {
+  anthropic: { env: "SPARKBOX_ANTHROPIC_KEY", keyLabel: "Anthropic API key", option: "Claude" },
+  openai: { env: "SPARKBOX_OPENAI_KEY", keyLabel: "OpenAI API key", option: "OpenAI" },
+  openrouter: {
+    env: "SPARKBOX_OPENROUTER_KEY",
+    keyLabel: "OpenRouter API key",
+    option: "OpenRouter",
+  },
+} as const;
+const provider = providers[providerArg as keyof typeof providers];
+if (!provider) throw new Error(`Unknown provider ${providerArg}`);
+const key = process.env[provider.env];
+if (!key) throw new Error(`Set ${provider.env}`);
 const base = process.env.SPARKBOX_URL ?? "http://127.0.0.1:4320";
 const model = process.env.SPARKBOX_MODEL ?? "";
+const label = `live-${providerArg}`;
 mkdirSync("artifacts", { recursive: true });
 
 const browser = await chromium.launch({ headless: true });
@@ -24,15 +40,16 @@ page.on("console", (message) => {
 page.on("pageerror", (error) => errors.push(error.message.replaceAll(key, "[key]")));
 
 await page.goto(base);
-await page.getByLabel("New project name").fill("Live Claude");
+await page.getByLabel("New project name").fill(`Live ${provider.option}`);
 await page.getByRole("button", { name: "Create" }).click();
 await page.getByText("Sandbox ready").waitFor({ state: "attached", timeout: 180_000 });
 console.log("sandbox ready");
 
-await page.getByLabel("Anthropic API key").fill(key);
+await page.getByLabel("Agent provider").selectOption({ label: provider.option });
+await page.getByLabel(provider.keyLabel).fill(key);
 await page.getByRole("button", { name: "Save key" }).click();
 // The connection panel closes once the provider is ready.
-await page.getByLabel("Anthropic API key").waitFor({ state: "detached" });
+await page.getByLabel(provider.keyLabel).waitFor({ state: "detached" });
 if (model) {
   await page.getByRole("button", { name: "Agent connection settings" }).click();
   await page.getByLabel("Model").fill(model);
@@ -50,7 +67,7 @@ console.log("turn started");
 await stop.waitFor({ state: "detached", timeout: 420_000 });
 console.log("turn finished");
 await page.waitForTimeout(1000);
-await page.screenshot({ path: "artifacts/live-anthropic-chat.png", fullPage: true });
+await page.screenshot({ path: `artifacts/${label}-chat.png`, fullPage: true });
 
 const rows = await page.locator(".chat-thread").innerText();
 const assistant = await page
@@ -66,7 +83,7 @@ const tabs = page.locator("nav.workspace-tabs");
 await tabs.getByRole("button", { name: "Files" }).click();
 await page.getByRole("treeitem", { name: /index\.html/ }).click();
 await page.locator(".monaco-editor").first().waitFor({ timeout: 30_000 });
-await page.screenshot({ path: "artifacts/live-anthropic-editor.png" });
+await page.screenshot({ path: `artifacts/${label}-editor.png` });
 const editorText = await page.locator(".monaco-editor .view-lines").first().innerText();
 console.log(
   "editor shows new heading:",
@@ -75,7 +92,7 @@ console.log(
 await tabs.getByRole("button", { name: "Changes" }).click();
 await page.locator(".file-diff").first().waitFor({ timeout: 20_000 });
 console.log("changed files:", await page.locator(".file-diff summary code").allInnerTexts());
-await page.screenshot({ path: "artifacts/live-anthropic-changes.png", fullPage: true });
+await page.screenshot({ path: `artifacts/${label}-changes.png`, fullPage: true });
 await tabs.getByRole("button", { name: "Preview" }).click();
 await page.locator(".preview-panel").getByRole("button", { name: "Preview" }).click();
 const frame = page.locator("iframe.preview-frame");
@@ -84,7 +101,7 @@ await frame
   .contentFrame()
   .getByRole("heading", { name: "Hello from Sparkbox" })
   .waitFor({ timeout: 60_000 });
-await page.screenshot({ path: "artifacts/live-anthropic-preview.png" });
+await page.screenshot({ path: `artifacts/${label}-preview.png` });
 console.log("preview shows the new heading");
 // Reload: transcript and files must come back.
 await page.reload();

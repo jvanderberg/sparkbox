@@ -46,7 +46,7 @@ function ToolActivity({ event, active }: { event: AgentEvent; active: boolean })
   } catch {
     // Older runtime events can contain a plain text result.
   }
-  const command = /bash|terminal|shell/i.test(event.text);
+  const command = /bash|terminal|shell|run_command/i.test(event.text);
   const file = /read|edit|write|patch/i.test(event.text);
   const Icon = command ? Terminal : file ? FileCode2 : Wrench;
   const verb = /read/i.test(event.text)

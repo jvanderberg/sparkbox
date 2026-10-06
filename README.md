@@ -42,7 +42,7 @@ Create a project, add a key in the Agent panel's Connection settings, and ask fo
 ## Limits
 
 - **No outbound network from the sandbox** unless a WISP relay URL is set in Settings. `npm install` and `curl` fail without one. The starter template needs no install step, and the agent is told to build apps that load libraries from a CDN in the preview instead.
-- **Only the Anthropic adapter has been run live.** `npm run test:live:anthropic` with `SPARKBOX_ANTHROPIC_KEY` set makes one paid Claude turn through the UI. The OpenAI and OpenRouter adapters typecheck against the official SDKs but have not been run against live accounts yet.
+- **Anthropic and OpenRouter have been run live; OpenAI has not.** `npm run test:live:anthropic` and `npm run test:live:openrouter` (with `SPARKBOX_ANTHROPIC_KEY` / `SPARKBOX_OPENROUTER_KEY` set) each make one paid turn through the UI. The OpenAI adapter typechecks against the official SDK but has not been run against a live account yet.
 - **Preview needs a second origin.** Locally that is `localhost` vs `127.0.0.1`. A static deployment needs two hostnames serving the same build, set in Settings → Preview origin. GitHub Pages project sites share one origin, so use Cloudflare Pages or similar with two custom domains, or a separate host for the preview files (`wasmer-service-worker.js` and `.wasmer/`).
 - **Cross-origin isolation is required.** The dev server and `public/_headers` set the headers. Hosts that cannot set headers need the coi-serviceworker shim.
 - The full sandbox wants a desktop-class browser. Phones run the UI, but memory headroom for Wasmer on iOS is unverified.
