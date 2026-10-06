@@ -1,10 +1,17 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { runShell, textEditor } from "../tools.ts";
+import { pageTools, runPageTool, runShell, textEditor } from "../tools.ts";
 import { describeFailure, type Prompt, type ProviderSession, type TurnContext } from "./types.ts";
 
 const tools: Anthropic.Messages.ToolUnion[] = [
   { type: "bash_20250124", name: "bash" },
   { type: "text_editor_20250728", name: "str_replace_based_edit_tool" },
+  ...pageTools.map(
+    (tool): Anthropic.Messages.Tool => ({
+      name: tool.name,
+      description: tool.description,
+      input_schema: tool.parameters as unknown as Anthropic.Messages.Tool.InputSchema,
+    }),
+  ),
 ];
 
 /** Claude through the Messages API with the Anthropic-defined coding tools. */
@@ -80,8 +87,18 @@ export class AnthropicSession implements ProviderSession {
         context.sink.tool(use.id, use.name, { status: "running", input });
         let output = "";
         let failed = false;
+        let image: { data: string; mime: "image/jpeg" | "image/png" } | undefined;
         try {
-          if (use.name === "bash") {
+          const page = await runPageTool(use.name, input, {
+            sandbox: context.sandbox,
+            preview: context.preview,
+            signal: context.signal,
+          });
+          if (page) {
+            output = page.output;
+            failed = Boolean(page.error);
+            image = page.image;
+          } else if (use.name === "bash") {
             if (input.restart) output = "Shell restarted.";
             else {
               let live = "";
@@ -116,7 +133,15 @@ export class AnthropicSession implements ProviderSession {
         results.push({
           type: "tool_result",
           tool_use_id: use.id,
-          content: output,
+          content: image
+            ? [
+                { type: "text", text: output },
+                {
+                  type: "image",
+                  source: { type: "base64", media_type: image.mime, data: image.data },
+                },
+              ]
+            : output,
           ...(failed ? { is_error: true } : {}),
         });
       }

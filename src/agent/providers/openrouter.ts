@@ -3,10 +3,16 @@ import type {
   ChatCompletionMessageParam,
   ChatCompletionTool,
 } from "openai/resources/chat/completions";
-import { genericTools, runGenericTool } from "../tools.ts";
+import {
+  genericTools,
+  pageTools,
+  runGenericTool,
+  runPageTool,
+  type ToolOutcome,
+} from "../tools.ts";
 import { describeFailure, type Prompt, type ProviderSession, type TurnContext } from "./types.ts";
 
-const tools: ChatCompletionTool[] = genericTools.map((tool) => ({
+const tools: ChatCompletionTool[] = [...genericTools, ...pageTools].map((tool) => ({
   type: "function",
   function: { name: tool.name, description: tool.description, parameters: tool.parameters },
 }));
@@ -94,6 +100,37 @@ export class OpenRouterSession implements ProviderSession {
         }
         context.sink.tool(call.id, call.function.name, { status: "running", input: args });
         let live = "";
+        const page = await runPageTool(call.function.name, args, {
+          sandbox: context.sandbox,
+          preview: context.preview,
+          signal: context.signal,
+        }).catch(
+          (error): ToolOutcome => ({
+            output: error instanceof Error ? error.message : String(error),
+            error: true,
+          }),
+        );
+        if (page) {
+          context.sink.tool(call.id, call.function.name, {
+            status: page.error ? "error" : "done",
+            input: args,
+            output: page.output,
+          });
+          this.messages.push({ role: "tool", tool_call_id: call.id, content: page.output });
+          // Chat tool messages are text only; the screenshot follows as a user turn.
+          if (page.image)
+            this.messages.push({
+              role: "user",
+              content: [
+                { type: "text", text: `Screenshot from the preview tool (call ${call.id}):` },
+                {
+                  type: "image_url",
+                  image_url: { url: `data:${page.image.mime};base64,${page.image.data}` },
+                },
+              ],
+            });
+          continue;
+        }
         const result = await runGenericTool(context.sandbox, call.function.name, args, {
           signal: context.signal,
           onOutput: (chunk) => {

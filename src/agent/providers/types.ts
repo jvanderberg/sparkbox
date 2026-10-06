@@ -1,5 +1,6 @@
 import type { AgentImage } from "../../agents/images.ts";
 import type { Sandbox } from "../../sandbox/types.ts";
+import type { PreviewController } from "../preview-controller.ts";
 
 export type ProviderId = "anthropic" | "openai" | "openrouter";
 
@@ -62,6 +63,7 @@ export type TurnContext = {
   signal: AbortSignal;
   system: string;
   sink: TurnSink;
+  preview?: PreviewController;
 };
 
 /** One provider-specific conversation. History stays in memory per session. */

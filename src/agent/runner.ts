@@ -4,6 +4,7 @@ import type { AgentEvent, QueuedPrompt } from "../agents/protocol.ts";
 import { agentQueueLimit } from "../agents/protocol.ts";
 import { kv } from "../sandbox/storage.ts";
 import type { Sandbox } from "../sandbox/types.ts";
+import type { PreviewController } from "./preview-controller.ts";
 import { AnthropicSession } from "./providers/anthropic.ts";
 import { OpenAISession } from "./providers/openai.ts";
 import { OpenRouterSession } from "./providers/openrouter.ts";
@@ -37,6 +38,8 @@ export type RunnerOptions = {
   previewPort: number;
   /** Errors the preview page reported since it was started, oldest first. */
   previewErrors?: () => string[];
+  /** The preview tool's backend. */
+  preview?: PreviewController;
   /** Test seam: build a session instead of reading saved keys. */
   createSession?: (provider: ProviderId, model: string) => ProviderSession;
 };
@@ -214,6 +217,7 @@ export class AgentRunner {
           sandbox: this.options.sandbox,
           signal: controller.signal,
           system,
+          preview: this.options.preview,
           sink: {
             text: (id, delta) => {
               if (!controller.signal.aborted) this.emit({ type: "text", id, text: delta });

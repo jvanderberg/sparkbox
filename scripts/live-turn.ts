@@ -60,7 +60,7 @@ if (model) {
 const scenario = process.env.SPARKBOX_SCENARIO ?? "edit";
 const prompt =
   scenario === "map"
-    ? "Replace this page with a Leaflet map of Oak Park, Illinois centered on 41.885, -87.785 at zoom 13, with OpenStreetMap tiles and one marker on the village hall. Load Leaflet from a CDN. Keep the page heading as an h1 that says 'Oak Park map'. Reply in two sentences."
+    ? "Replace this page with a Leaflet map of Oak Park, Illinois centered on 41.885, -87.785 at zoom 13, with OpenStreetMap tiles and one marker on the village hall. Load Leaflet from a CDN. Keep the page heading as an h1 that says 'Oak Park map'. Also use the download tool to save https://raw.githubusercontent.com/jvanderberg/sparkbox/main/README.md into data/notes.md. When done, use the preview tool to take a phone screenshot and tell me in one sentence what the screenshot shows, then one sentence summarizing the changes."
     : "Change the page heading to 'Hello from Sparkbox', add a short paragraph under it that explains the page was edited by an agent running in the browser, and run `ls -la` so I can see the project files. Reply in two sentences.";
 const expectedHeading = scenario === "map" ? "Oak Park map" : "Hello from Sparkbox";
 await page.getByLabel("Message to agent").fill(prompt);
@@ -98,8 +98,10 @@ await page.locator(".file-diff").first().waitFor({ timeout: 20_000 });
 console.log("changed files:", await page.locator(".file-diff summary code").allInnerTexts());
 await page.screenshot({ path: `artifacts/${label}-changes.png`, fullPage: true });
 await tabs.getByRole("button", { name: "Preview" }).click();
-await page.locator(".preview-panel").getByRole("button", { name: "Preview" }).click();
 const frame = page.locator("iframe.preview-frame");
+// The agent may already have started the preview through its tool.
+if (!(await frame.count()))
+  await page.locator(".preview-panel").getByRole("button", { name: "Preview" }).click();
 await frame.waitFor({ timeout: 180_000 });
 await frame
   .contentFrame()
@@ -124,4 +126,4 @@ await tabs.getByRole("button", { name: "Agent" }).click();
 await page.locator(".chat-thread").getByText(expectedHeading).first().waitFor({ timeout: 20_000 });
 console.log("transcript restored after reload");
 await browser.close();
-if (errors.length) console.log("console errors:\n" + errors.join("\n"));
+if (errors.length) console.log(`console errors:\n${errors.join("\n")}`);

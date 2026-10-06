@@ -1,5 +1,8 @@
+import type { PreviewViewport } from "../preview-bridge.ts";
 import { type Sandbox, workspacePath } from "../sandbox/types.ts";
+import { FILE_LIMIT } from "../workspace/types.ts";
 import { applyUpdate, parseUpdateBody } from "./apply-patch.ts";
+import type { PreviewController } from "./preview-controller.ts";
 
 export const outputLimit = 16_000;
 
@@ -233,4 +236,170 @@ export async function runGenericTool(
     default:
       return { output: `Unknown tool: ${name}`, error: true };
   }
+}
+
+/**
+ * Tools that run in the page rather than in the sandbox, available to every
+ * provider: fetching from the internet, and looking at the running app.
+ */
+export const pageTools = [
+  {
+    name: "download",
+    description:
+      "Download a URL with the browser and save it into the project. Works for servers that allow cross-origin reads (open-data portals, GitHub raw files, npm and CDNs); if the server blocks it, the error says so and the user can upload the file instead. Max 25 MiB.",
+    parameters: {
+      type: "object",
+      properties: {
+        url: { type: "string", description: "The http(s) URL to fetch" },
+        path: {
+          type: "string",
+          description:
+            "Where to save it, relative to the project (default data/<filename from the URL>)",
+        },
+      },
+      required: ["url"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "preview",
+    description:
+      "Look at the running app as the user sees it. Starts the preview if needed. format: 'screenshot' (image at the chosen viewport), 'text' (headings, links, buttons, inputs, images and visible text, plus overflow info), 'html' (current DOM), 'errors' (page errors on a fresh load plus those the user hit). viewport: 'phone' (390x844), 'tablet' (820x1180) or 'desktop' (1280x800). Screenshots use the current system color scheme only.",
+    parameters: {
+      type: "object",
+      properties: {
+        format: { type: "string", enum: ["screenshot", "text", "html", "errors"] },
+        viewport: { type: "string", enum: ["phone", "tablet", "desktop"] },
+        path: { type: "string", description: "Page path to open, default /" },
+      },
+      required: ["format"],
+      additionalProperties: false,
+    },
+  },
+] as const;
+
+export type ToolOutcome = {
+  output: string;
+  error?: boolean;
+  image?: { data: string; mime: "image/jpeg" | "image/png"; width: number; height: number };
+};
+
+function filenameFromUrl(url: URL) {
+  const last = url.pathname.split("/").filter(Boolean).pop() ?? "";
+  return last && !last.includes("..") ? decodeURIComponent(last) : "download";
+}
+
+export async function downloadTool(
+  sandbox: Sandbox,
+  args: Record<string, unknown>,
+  signal?: AbortSignal,
+): Promise<ToolOutcome> {
+  let url: URL;
+  try {
+    url = new URL(String(args.url ?? ""));
+  } catch {
+    return { output: "A valid http(s) URL is required.", error: true };
+  }
+  if (!/^https?:$/.test(url.protocol))
+    return { output: "Only http and https URLs can be downloaded.", error: true };
+  const relative = workspacePath(
+    sandbox.root,
+    typeof args.path === "string" && args.path.trim() ? args.path : `data/${filenameFromUrl(url)}`,
+  );
+  if (!relative) return { output: "A file path is required.", error: true };
+  let response: Response;
+  try {
+    response = await fetch(url, { signal, mode: "cors", credentials: "omit" });
+  } catch (error) {
+    return {
+      output: `Could not fetch ${url.href}: ${error instanceof Error ? error.message : String(error)}. The server probably does not allow cross-origin reads. Ask the user to download the file and upload it through Files, or use a source that supports CORS.`,
+      error: true,
+    };
+  }
+  if (!response.ok)
+    return { output: `Fetching ${url.href} failed with HTTP ${response.status}.`, error: true };
+  const declared = Number(response.headers.get("content-length") ?? 0);
+  if (declared > FILE_LIMIT) return { output: "The file exceeds the 25 MiB limit.", error: true };
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  if (bytes.byteLength > FILE_LIMIT)
+    return { output: "The file exceeds the 25 MiB limit.", error: true };
+  await sandbox.writeFile(relative, bytes);
+  const type = response.headers.get("content-type") ?? "unknown type";
+  return { output: `Saved ${relative} (${bytes.byteLength} bytes, ${type}).` };
+}
+
+export async function previewTool(
+  controller: PreviewController | undefined,
+  args: Record<string, unknown>,
+): Promise<ToolOutcome> {
+  if (!controller) return { output: "The preview is not available in this session.", error: true };
+  const format = String(args.format ?? "text");
+  const viewport = (
+    ["phone", "tablet", "desktop"].includes(String(args.viewport))
+      ? String(args.viewport)
+      : "desktop"
+  ) as PreviewViewport;
+  const path = typeof args.path === "string" && args.path.startsWith("/") ? args.path : "/";
+  try {
+    await controller.ensureRunning();
+  } catch (error) {
+    return {
+      output: `The preview could not start: ${error instanceof Error ? error.message : String(error)}`,
+      error: true,
+    };
+  }
+  try {
+    switch (format) {
+      case "screenshot": {
+        const result = await controller.query({ format: "screenshot", viewport, path });
+        if (result.format !== "screenshot") throw new Error("unexpected result");
+        return {
+          output: `Screenshot of ${path} at ${viewport} size (${result.width}x${result.height}), current system color scheme.`,
+          image: {
+            data: result.image,
+            mime: result.mime,
+            width: result.width,
+            height: result.height,
+          },
+        };
+      }
+      case "html": {
+        const result = await controller.query({ format: "html", viewport, path });
+        if (result.format !== "html") throw new Error("unexpected result");
+        return { output: truncate(result.html, 60_000) };
+      }
+      case "errors": {
+        const result = await controller.query({ format: "errors", viewport, path });
+        if (result.format !== "errors") throw new Error("unexpected result");
+        const recent = controller.recentErrors();
+        return {
+          output: [
+            `Errors on a fresh load of ${path} at ${viewport} size: ${result.errors.length ? `\n${result.errors.join("\n")}` : "none"}`,
+            `Errors reported while the user used the preview: ${recent.length ? `\n${recent.join("\n")}` : "none"}`,
+          ].join("\n\n"),
+        };
+      }
+      default: {
+        const result = await controller.query({ format: "text", viewport, path });
+        if (result.format !== "text") throw new Error("unexpected result");
+        return { output: truncate(result.text, 20_000) };
+      }
+    }
+  } catch (error) {
+    return {
+      output: `Could not read the preview: ${error instanceof Error ? error.message : String(error)}`,
+      error: true,
+    };
+  }
+}
+
+/** Run a page tool by name, or return null when the name is not one. */
+export async function runPageTool(
+  name: string,
+  args: Record<string, unknown>,
+  context: { sandbox: Sandbox; preview?: PreviewController; signal?: AbortSignal },
+): Promise<ToolOutcome | null> {
+  if (name === "download") return downloadTool(context.sandbox, args, context.signal);
+  if (name === "preview") return previewTool(context.preview, args);
+  return null;
 }

@@ -16,13 +16,17 @@ Status as of 2026-10-05. Prototype only.
 - [x] Runtime recovery: a dead Wasmer scheduler triggers a sandbox rebuild from the in-memory files, with the preview reset. Files are also flushed to IndexedDB after every agent turn and when the tab is hidden.
 - [x] Page errors from the preview are captured through an injected reporter and shown in the panel and the agent prompt. grep, sed and ripgrep added; guidance lists what exists.
 
+- [x] Agent preamble ported from Civic Spark's workspace guidance (2026-10-06).
+- [x] Page-side tools (2026-10-06): `download` saves URLs into the project through the browser's fetch; `preview` returns screenshots at phone/tablet/desktop sizes, a text outline, HTML or errors from hidden probe frames served by the same sandbox. Covered by unit tests and the browser smoke.
+
 ## Not done
 
 - [x] Anthropic adapter verified live on 2026-10-05 with Opus 5.5 (`npm run test:live:anthropic`): bash and text-editor tools, streamed reply, preview, changes and transcript restore after reload. Fixed a doubled-delta bug from a StrictMode double subscription.
 - [x] OpenRouter adapter verified live on 2026-10-05 with `z-ai/glm-5.3-flash` (`npm run test:live:openrouter`): function tools, streamed reply, preview, changes and transcript restore.
 - [ ] Live verification of the OpenAI adapter (needs a key; not run in CI).
 - [ ] GitHub: connect with a token, push through the REST Git Data API, enable Pages. Changes should then compare against the last pushed commit.
-- [ ] Outbound network: page-side npm installer that fetches tarballs from the registry into the sandbox, so `npm install` works without a WISP relay. Until then, document relay setup.
+- [ ] Outbound network: page-side npm installer that fetches tarballs from the registry into the sandbox, so `npm install` works without a WISP relay. The `download` tool is the first step; an installer would resolve the dependency tree and unpack into node_modules.
+- [ ] Screenshots in the other color scheme (a hidden frame cannot change prefers-color-scheme; would need a CSS override hook).
 - [ ] Lite mode for phones: esbuild-wasm build and preview without the Wasmer sandbox.
 - [ ] A deployed demo with two hostnames (app and preview host).
 - [ ] Remove the leftover Civic Spark portal CSS from `src/styles.css` and the unused `claude`/`opencode` provider names in `src/agents/protocol.ts`.

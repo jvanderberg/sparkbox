@@ -11,6 +11,13 @@ Sparkbox is derived from [Civic Spark](https://github.com/jvanderberg/civic-spar
 | Management server, email sign-in, Git on the host | Nothing. Files live in IndexedDB; keys live in localStorage |
 | Managed preview URL | A static server inside the sandbox, served through a service worker on a second origin |
 
+## Agent tools
+
+Besides each provider's native file and shell tools, the agent gets two tools that run in the page rather than in the sandbox:
+
+- **download**: fetches a URL with the browser and saves it into the project. Works wherever the server allows cross-origin reads (open-data portals, GitHub raw files, npm, CDNs). When CORS blocks it, the agent asks for an upload.
+- **preview**: looks at the running app. Formats: a screenshot at phone, tablet or desktop size (rendered by html2canvas in a hidden frame), a text outline of headings, links, buttons, inputs, images and overflow, the current HTML, or the page errors on a fresh load plus those the user hit. Screenshots go back to Claude and OpenAI inside the tool result and to OpenRouter models as a follow-up user message.
+
 ## Providers
 
 | Provider | Tools the model uses | Key |

@@ -66,8 +66,15 @@ export function usePreview(sandbox: WasmerSandbox | null, origin: string) {
     }
     const listener = (event: MessageEvent) => {
       if (event.origin !== expected) return;
-      const data = event.data as { type?: string; message?: string; href?: string } | null;
+      const data = event.data as {
+        type?: string;
+        message?: string;
+        href?: string;
+        probe?: boolean;
+      } | null;
       if (data?.type !== "sparkbox:page-error" || typeof data.message !== "string") return;
+      // Hidden probe frames belong to the agent's preview tool, not the user's view.
+      if (data.probe) return;
       const line = `${data.href && data.href !== "/" ? `${data.href}: ` : ""}${data.message}`;
       setPageErrors((previous) => [...previous.slice(-49), line]);
     };
@@ -75,51 +82,72 @@ export function usePreview(sandbox: WasmerSandbox | null, origin: string) {
     return () => window.removeEventListener("message", listener);
   }, [origin]);
 
-  async function expose(port: number) {
-    if (!sandbox) return;
+  const urlRef = useRef("");
+  urlRef.current = url;
+  const startingRef = useRef<Promise<string> | null>(null);
+
+  async function expose(port: number): Promise<string> {
+    if (!sandbox) throw new Error("The sandbox is not ready.");
     if (!origin) {
-      setError(
-        "Set a preview origin in Settings. The preview needs a second origin to serve from.",
-      );
-      return;
+      const message =
+        "Set a preview origin in Settings. The preview needs a second origin to serve from.";
+      setError(message);
+      throw new Error(message);
     }
     try {
       const server = await sandbox.expose(port, origin);
       closeServer.current = server.close;
       setUrl(server.url);
+      urlRef.current = server.url;
       setError("");
+      return server.url;
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
+      throw cause;
     }
   }
 
-  async function start() {
-    if (!sandbox || starting) return;
-    setStarting(true);
-    setError("");
-    setLogs("");
-    setPageErrors([]);
-    try {
-      await sandbox.writeFile(".sparkbox/serve.mjs", serveScript);
-      const started = await sandbox.start(`node .sparkbox/serve.mjs ${previewPort}`, (chunk) =>
-        setLogs((text) => (text + chunk).slice(-20_000)),
-      );
-      process.current = started.process;
-      setRunning(true);
-      void started.done.then((code) => {
-        if (process.current === started.process) {
-          process.current = null;
-          setRunning(false);
-          if (code !== 0) setError(`The preview server exited with code ${code}.`);
-        }
-      });
-      await sandbox.waitForPort(previewPort, 60_000);
-      await expose(previewPort);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      setStarting(false);
-    }
+  /** Start the static server and expose it; resolves with the preview URL. */
+  function start(): Promise<string> {
+    if (startingRef.current) return startingRef.current;
+    if (!sandbox) return Promise.reject(new Error("The sandbox is not ready."));
+    const run = (async () => {
+      setStarting(true);
+      setError("");
+      setLogs("");
+      setPageErrors([]);
+      try {
+        await sandbox.writeFile(".sparkbox/serve.mjs", serveScript);
+        const started = await sandbox.start(`node .sparkbox/serve.mjs ${previewPort}`, (chunk) =>
+          setLogs((text) => (text + chunk).slice(-20_000)),
+        );
+        process.current = started.process;
+        setRunning(true);
+        void started.done.then((code) => {
+          if (process.current === started.process) {
+            process.current = null;
+            setRunning(false);
+            if (code !== 0) setError(`The preview server exited with code ${code}.`);
+          }
+        });
+        await sandbox.waitForPort(previewPort, 60_000);
+        return await expose(previewPort);
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : String(cause));
+        throw cause;
+      } finally {
+        setStarting(false);
+        startingRef.current = null;
+      }
+    })();
+    startingRef.current = run;
+    return run;
+  }
+
+  /** The agent's entry point: the current URL, or a fresh start. */
+  function ensureRunning(): Promise<string> {
+    if (urlRef.current && process.current) return Promise.resolve(urlRef.current);
+    return start();
   }
 
   async function stop() {
@@ -144,6 +172,7 @@ export function usePreview(sandbox: WasmerSandbox | null, origin: string) {
     recentPageErrors: () => pageErrorsRef.current,
     clearPageErrors: () => setPageErrors([]),
     start,
+    ensureRunning,
     stop,
     expose,
   };
@@ -177,7 +206,7 @@ export function PreviewControls({
           className="button small primary"
           onClick={() => {
             onShow();
-            void preview.start();
+            void preview.start().catch(() => {});
           }}
           disabled={disabled || preview.starting}
         >
@@ -198,7 +227,7 @@ export function PreviewControls({
             className="button small"
             onClick={() => {
               onShow();
-              void preview.expose(port);
+              void preview.expose(port).catch(() => {});
             }}
           >
             Show port {port}
@@ -266,7 +295,7 @@ export function PreviewPanel({
           <button
             type="button"
             className="button primary"
-            onClick={() => void preview.start()}
+            onClick={() => void preview.start().catch(() => {})}
             disabled={preview.starting || preview.running}
           >
             <Play size={14} /> {preview.starting ? "Starting…" : "Preview"}

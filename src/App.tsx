@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { completeOpenRouterLogin } from "./agent/openrouter-auth.ts";
+import type { PreviewController } from "./agent/preview-controller.ts";
 import { AgentRunner } from "./agent/runner.ts";
 import { settings } from "./agent/settings.ts";
 import { Field, Modal } from "./components.tsx";
 import { Loading } from "./Loading.tsx";
 import { defaultPreviewOrigin, previewPort, usePreview } from "./Preview.tsx";
+import { queryPreview } from "./preview-bridge.ts";
 import { deleteSnapshot, listSnapshots } from "./sandbox/storage.ts";
 import { type SandboxProgress, WasmerSandbox } from "./sandbox/wasmer.ts";
 import { starterTemplate } from "./template.ts";
@@ -238,8 +240,23 @@ function ProjectSession({
   const [error, setError] = useState("");
   const origin = settings.previewOrigin() || defaultPreviewOrigin();
   const preview = usePreview(sandbox, origin);
-  const recentPageErrors = useRef(preview.recentPageErrors);
-  recentPageErrors.current = preview.recentPageErrors;
+  const previewRef = useRef(preview);
+  previewRef.current = preview;
+  // The agent's preview tool. A stable object that always reaches the latest hook state.
+  const [controller] = useState<PreviewController>(() => ({
+    ensureRunning: () => previewRef.current.ensureRunning(),
+    query: async (request) => queryPreview(await previewRef.current.ensureRunning(), request),
+    recentErrors: () => previewRef.current.recentPageErrors(),
+  }));
+  useEffect(() => {
+    // Exposed for browser checks; it is the same object the agent uses.
+    (window as unknown as { sparkboxPreviewTool?: unknown }).sparkboxPreviewTool = (
+      request: Parameters<PreviewController["query"]>[0],
+    ) => controller.query(request);
+    return () => {
+      (window as unknown as { sparkboxPreviewTool?: unknown }).sparkboxPreviewTool = undefined;
+    };
+  }, [controller]);
 
   useEffect(() => {
     let active = true;
@@ -262,7 +279,8 @@ function ProjectSession({
             sandbox: instance,
             networkEnabled: () => Boolean(settings.wispUrl()),
             previewPort,
-            previewErrors: () => recentPageErrors.current(),
+            previewErrors: () => controller.recentErrors(),
+            preview: controller,
           }),
         );
       })
@@ -281,7 +299,7 @@ function ProjectSession({
       document.removeEventListener("visibilitychange", hidden);
       void created?.close();
     };
-  }, [project.id, project.name]);
+  }, [project.id, project.name, controller]);
 
   if (!sandbox || !runner)
     return <Loading title={project.name} progress={progress} error={error} onBack={onClose} />;

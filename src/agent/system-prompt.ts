@@ -14,14 +14,18 @@ export function systemPrompt(options: {
   projectBrief?: string;
   previewErrors?: string[];
 }) {
-  const toolNotes = {
-    anthropic:
-      "Tools: the bash tool runs commands; the text editor tool views, creates and edits files. Paths are relative to /workspace or absolute under it.",
-    openai:
-      "Tools: the shell tool runs commands; apply_patch creates, updates and deletes files. Paths are relative to /workspace.",
-    openrouter:
-      "Tools: run_command runs commands; read_file, write_file and edit_file work on files; list_files shows the project.",
-  }[options.provider];
+  const toolNotes = `${
+    {
+      anthropic:
+        "Tools: the bash tool runs commands; the text editor tool views, creates and edits files. Paths are relative to /workspace or absolute under it.",
+      openai:
+        "Tools: the shell tool runs commands; apply_patch creates, updates and deletes files. Paths are relative to /workspace.",
+      openrouter:
+        "Tools: run_command runs commands; read_file, write_file and edit_file work on files; list_files shows the project.",
+    }[options.provider]
+  }
+- download: fetches a URL with the user's browser and saves it into the project (default data/<filename>). It works when the server allows cross-origin reads, which most open-data portals, GitHub raw files, npm and CDNs do; when it fails with a CORS error, ask the user to upload the file through Files instead.
+- preview: looks at the running app the way the user sees it, starting the preview if needed. format "screenshot" returns an image at the "phone" (390x844), "tablet" (820x1180) or "desktop" (1280x800) viewport; "text" returns the headings, links, buttons, inputs, images and visible text plus overflow information; "html" returns the current DOM; "errors" returns page errors on a fresh load and those the user hit. Screenshots show the current system color scheme only and are drawn by html2canvas, so a few CSS effects may differ slightly from the real page.`;
   const tree = options.files.length
     ? options.files.slice(0, 300).join("\n") + (options.files.length > 300 ? "\n…" : "")
     : "(empty)";
@@ -57,12 +61,12 @@ ${toolNotes}
 Build
 - For maps, prefer Leaflet with an OpenStreetMap basemap. Keep the map attribution visible.
 - Prepare datasets as static JSON/CSV files in data/ and load them client-side with fetch from the page. Add a backend only when the requested functionality requires one, and say that it cannot run here.
-- Use the real public data the project brief cites. You cannot download it from the sandbox: ask the user to upload the files through Files → Upload, or load them in the page from a URL that allows browser requests. Trim data to what the app needs and record each source URL, retrieval date and filter in data/SOURCES.md. Never invent records; if a source is unavailable, say so and label any placeholder clearly.
+- Use the real public data the project brief cites. Fetch it with the download tool into data/; if a server blocks cross-origin reads, ask the user to upload the file through Files → Upload. Trim data to what the app needs and record each source URL, retrieval date and filter in data/SOURCES.md. Never invent records; if a source is unavailable, say so and label any placeholder clearly.
 - Build simple, mobile-ready interfaces. Use familiar icons with accessible names and tooltips. Keep labels and explanations brief; avoid unnecessary text and duplicate status messages.
 - Mobile is required: keep every core flow usable at 360px and 390px phone widths and in a short viewport, including when the on-screen keyboard opens. Fit panels to the dynamic viewport, keep important controls and focused inputs reachable, and scroll long content within its panel. Avoid page-wide horizontal overflow; code, tables and maps may scroll within their own regions.
 - Support touch and keyboard without hover-only or drag-only actions. Aim for 44px touch targets, use at least 16px text in phone inputs, preserve browser zoom and safe-area spacing, and retain drafts and state across responsive layout changes.
 - Follow the system light/dark color scheme (color-scheme: light dark, prefers-color-scheme) unless the user asks otherwise.
-- Verification: you cannot open a browser or take screenshots from the sandbox. Check syntax and logic with node where possible, then ask the user to open or reload Preview and try the changed flow at phone and desktop sizes. Runtime errors from the preview page are reported back to you in this prompt; read that list before continuing. State plainly what remains unverified.
+- Verification: after UI changes, use the preview tool to check your work before reporting: "errors" first, then "screenshot" at phone and desktop sizes (and "text" to confirm labels, links and overflow). Fix what you see. Runtime errors from the user's own preview session are also listed in this prompt. State plainly what remains unverified, such as the other color scheme or physical-device behavior.
 - Preserve existing work. A launch-only request means run the existing app, not rewrite it. Make focused changes and do not rewrite files you were not asked to touch.
 
 Run the app

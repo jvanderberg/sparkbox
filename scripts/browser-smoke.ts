@@ -95,6 +95,38 @@ async function run(label: string, options: { mobile?: boolean; dark?: boolean })
   await page.getByText(/1 page error/).waitFor({ timeout: 10_000 });
   await page.screenshot({ path: `artifacts/smoke-${label}-preview.png` });
   await page.getByRole("button", { name: "Clear page errors" }).click();
+  // The agent's preview tool: a text outline, the error list and a phone screenshot
+  // captured through hidden probe frames.
+  const tool = await page.evaluate(async () => {
+    const query = (
+      window as unknown as {
+        sparkboxPreviewTool: (request: { format: string; viewport?: string }) => Promise<unknown>;
+      }
+    ).sparkboxPreviewTool;
+    const text = (await query({ format: "text", viewport: "phone" })) as { text: string };
+    const errors = (await query({ format: "errors" })) as { errors: string[] };
+    const shot = (await query({ format: "screenshot", viewport: "phone" })) as {
+      image: string;
+      width: number;
+      height: number;
+    };
+    return {
+      text: text.text.slice(0, 300),
+      errors: errors.errors,
+      width: shot.width,
+      height: shot.height,
+      bytes: shot.image.length,
+    };
+  });
+  console.log(`${label} preview tool:`, JSON.stringify({ ...tool, text: tool.text.slice(0, 120) }));
+  if (!tool.text.includes(`# Smoke ${label}`) || !tool.text.includes("[button] Clicked"))
+    throw new Error(`preview text outline is wrong: ${tool.text}`);
+  if (tool.errors.length) throw new Error(`fresh load reported errors: ${tool.errors.join(", ")}`);
+  if (tool.width !== 390 || tool.height !== 844 || tool.bytes < 2000)
+    throw new Error(`screenshot is wrong: ${JSON.stringify(tool)}`);
+  // The probe frames must not have added errors to the user's preview view.
+  if (await page.locator(".preview-page-errors").count())
+    throw new Error("probe frames leaked page errors into the panel");
   await tabs.getByRole("button", { name: "Files" }).click();
   if (await expand.isVisible()) await expand.click();
   await page.getByRole("treeitem", { name: /app\.js/ }).click();

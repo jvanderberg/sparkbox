@@ -1,9 +1,28 @@
 import OpenAI from "openai";
 import type { ResponseInputItem, Tool } from "openai/resources/responses/responses";
-import { applyPatchOperation, runShell, truncate } from "../tools.ts";
+import {
+  applyPatchOperation,
+  pageTools,
+  runPageTool,
+  runShell,
+  type ToolOutcome,
+  truncate,
+} from "../tools.ts";
 import { describeFailure, type Prompt, type ProviderSession, type TurnContext } from "./types.ts";
 
-const tools: Tool[] = [{ type: "shell", environment: { type: "local" } }, { type: "apply_patch" }];
+const tools: Tool[] = [
+  { type: "shell", environment: { type: "local" } },
+  { type: "apply_patch" },
+  ...pageTools.map(
+    (tool): Tool => ({
+      type: "function",
+      name: tool.name,
+      description: tool.description,
+      parameters: tool.parameters as Record<string, unknown>,
+      strict: false,
+    }),
+  ),
+];
 
 /** OpenAI models through the Responses API with the shell and apply_patch tools. */
 export class OpenAISession implements ProviderSession {
@@ -125,6 +144,43 @@ export class OpenAISession implements ProviderSession {
             call_id: item.call_id,
             output: outputs,
             max_output_length: item.action.max_output_length ?? null,
+          } as ResponseInputItem);
+        } else if (item.type === "function_call") {
+          let args: Record<string, unknown> = {};
+          try {
+            args = JSON.parse(item.arguments || "{}");
+          } catch {
+            // Invalid JSON: report it as a tool error below.
+          }
+          context.sink.tool(item.call_id, item.name, { status: "running", input: args });
+          const result = (await runPageTool(item.name, args, {
+            sandbox: context.sandbox,
+            preview: context.preview,
+            signal: context.signal,
+          }).catch(
+            (error): ToolOutcome => ({
+              output: error instanceof Error ? error.message : String(error),
+              error: true,
+            }),
+          )) ?? { output: `Unknown tool: ${item.name}`, error: true };
+          context.sink.tool(item.call_id, item.name, {
+            status: result.error ? "error" : "done",
+            input: args,
+            output: result.output,
+          });
+          calls.push({
+            type: "function_call_output",
+            call_id: item.call_id,
+            output: result.image
+              ? [
+                  { type: "input_text", text: result.output },
+                  {
+                    type: "input_image",
+                    detail: "auto",
+                    image_url: `data:${result.image.mime};base64,${result.image.data}`,
+                  },
+                ]
+              : result.output,
           } as ResponseInputItem);
         } else if (item.type === "apply_patch_call") {
           const operation = item.operation as { type: string; path: string; diff?: string };
