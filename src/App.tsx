@@ -3,6 +3,7 @@ import { completeOpenRouterLogin } from "./agent/openrouter-auth.ts";
 import { AgentRunner } from "./agent/runner.ts";
 import { settings } from "./agent/settings.ts";
 import { Field, Modal } from "./components.tsx";
+import { Loading } from "./Loading.tsx";
 import { defaultPreviewOrigin, previewPort, usePreview } from "./Preview.tsx";
 import { deleteSnapshot, listSnapshots } from "./sandbox/storage.ts";
 import { type SandboxProgress, WasmerSandbox } from "./sandbox/wasmer.ts";
@@ -233,7 +234,7 @@ function ProjectSession({
 }) {
   const [sandbox, setSandbox] = useState<WasmerSandbox | null>(null);
   const [runner, setRunner] = useState<AgentRunner | null>(null);
-  const [progress, setProgress] = useState<SandboxProgress>({ phase: "Starting" });
+  const [progress, setProgress] = useState<SandboxProgress>({ phase: "runtime" });
   const [error, setError] = useState("");
   const origin = settings.previewOrigin() || defaultPreviewOrigin();
   const preview = usePreview(sandbox, origin);
@@ -275,30 +276,7 @@ function ProjectSession({
   }, [project.id, project.name]);
 
   if (!sandbox || !runner)
-    return (
-      <main className="home">
-        <section className="home-card">
-          <h2>{project.name}</h2>
-          {error ? (
-            <>
-              <p className="error" role="alert">
-                {error}
-              </p>
-              <div className="form-actions">
-                <button type="button" className="button" onClick={onClose}>
-                  Back
-                </button>
-              </div>
-            </>
-          ) : (
-            <p role="status">
-              {progress.phase}
-              {progress.percent !== undefined ? ` (${Math.round(progress.percent)}%)` : "…"}
-            </p>
-          )}
-        </section>
-      </main>
-    );
+    return <Loading title={project.name} progress={progress} error={error} onBack={onClose} />;
 
   return (
     <Workspace

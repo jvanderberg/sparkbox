@@ -15,7 +15,13 @@ import {
 
 export const sandboxPackages = ["wasmer/bash", "wasmer/edgejs@0.2.5"] as const;
 
-export type SandboxProgress = { phase: string; percent?: number };
+export type SandboxProgress = {
+  phase: "runtime" | "resolving" | "downloading" | "loading" | "restoring" | "ready";
+  downloadedBytes?: number;
+  totalBytes?: number | null;
+  percent?: number | null;
+  cached?: boolean;
+};
 
 export type WasmerSandboxOptions = {
   workspace: string;
@@ -52,14 +58,14 @@ export class WasmerSandbox implements Sandbox {
         "This page is not cross-origin isolated. The sandbox needs the Cross-Origin-Opener-Policy and Cross-Origin-Embedder-Policy headers.",
       );
     const { Wasmer } = await import("@wasmer/sdk/browser");
-    options.onProgress?.({ phase: "Starting runtime" });
+    options.onProgress?.({ phase: "runtime" });
     const client = new Wasmer({ cache: { namespace: "sparkbox" } });
     await client.ready();
     const snapshot = await loadSnapshot(options.workspace);
     const files: Record<string, string | Uint8Array> = snapshot
       ? { ...snapshot.files }
       : { ...(options.template ?? {}) };
-    options.onProgress?.({ phase: "Downloading packages" });
+    options.onProgress?.({ phase: "resolving" });
     // Edge.js depends on wasmer/bash too, so qualify the shell by package to
     // avoid an ambiguous `bash` selector.
     const bash = await client.packages.load(sandboxPackages[0]);
@@ -76,14 +82,17 @@ export class WasmerSandbox implements Sandbox {
       },
       network: options.wispUrl ? { mode: "wisp", url: options.wispUrl } : { mode: "http" },
       onPackageProgress: (progress) => {
-        const download = (progress as { download?: { percent?: number } }).download;
         options.onProgress?.({
-          phase: `Downloading packages`,
-          percent: typeof download?.percent === "number" ? download.percent : undefined,
+          phase: progress.phase,
+          downloadedBytes: progress.download.downloadedBytes,
+          totalBytes: progress.download.totalBytes,
+          percent: progress.download.percent,
+          cached: progress.packages.length > 0 && progress.packages.every((entry) => entry.cached),
         });
       },
     });
-    options.onProgress?.({ phase: "Ready" });
+    options.onProgress?.({ phase: snapshot ? "restoring" : "ready" });
+    options.onProgress?.({ phase: "ready" });
     return new WasmerSandbox(client, handle, options.workspace, Boolean(snapshot));
   }
 

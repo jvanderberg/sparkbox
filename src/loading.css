@@ -1,0 +1,122 @@
+.loading {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  padding-top: max(24px, env(safe-area-inset-top));
+  padding-bottom: max(24px, env(safe-area-inset-bottom));
+  box-sizing: border-box;
+}
+.loading-card {
+  width: min(460px, 100%);
+  background: var(--app-surface);
+  border: 1px solid var(--app-border);
+  border-radius: 16px;
+  padding: 24px;
+  display: grid;
+  gap: 16px;
+}
+.loading-kicker {
+  margin: 0;
+  color: var(--app-muted);
+  font-size: 13px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.loading-card h1 {
+  margin: -10px 0 0;
+  font-size: 22px;
+  overflow-wrap: anywhere;
+}
+.loading-bar {
+  position: relative;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--app-muted-surface);
+  overflow: hidden;
+}
+.loading-bar span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--app-accent);
+  transition: width 300ms ease;
+}
+.loading-bar[data-indeterminate="true"] span {
+  animation: loading-slide 1.4s ease-in-out infinite;
+}
+@keyframes loading-slide {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(250%);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .loading-bar[data-indeterminate="true"] span {
+    animation: none;
+    width: 100%;
+    opacity: 0.4;
+  }
+}
+.loading-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+.loading-steps li {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  color: var(--app-muted);
+}
+.loading-steps li[data-state="active"] {
+  color: var(--app-text);
+  font-weight: 600;
+}
+.loading-steps li[data-state="done"] {
+  color: var(--app-text);
+}
+.loading-steps li[data-state="error"] {
+  color: var(--app-error-text);
+}
+.loading-steps small {
+  margin-left: auto;
+  font-weight: 400;
+  color: var(--app-muted);
+  font-variant-numeric: tabular-nums;
+}
+.loading-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--app-border);
+  position: relative;
+  top: 1px;
+}
+li[data-state="done"] .loading-dot {
+  background: var(--app-accent);
+}
+li[data-state="active"] .loading-dot {
+  background: var(--app-accent);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--app-accent) 25%, transparent);
+}
+li[data-state="error"] .loading-dot {
+  background: var(--app-error-text);
+}
+.loading-note {
+  margin: 0;
+  color: var(--app-muted);
+  font-size: 13px;
+}
+.loading-error {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--app-error);
+  color: var(--app-error-text);
+}

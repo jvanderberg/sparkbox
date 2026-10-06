@@ -59,8 +59,8 @@ function previewHost(): Plugin {
 
 export default defineConfig({
   plugins: [react(), tailwindcss(), previewHost()],
-  server: { port: 4320, strictPort: true, headers: isolation },
-  preview: { port: 4321, strictPort: true, headers: isolation },
+  server: { port: 4320, strictPort: true, headers: isolation, allowedHosts: [".ts.net"] },
+  preview: { port: 4321, strictPort: true, headers: isolation, allowedHosts: [".ts.net"] },
   optimizeDeps: { exclude: ["@wasmer/sdk"] },
   worker: { format: "es" },
   build: {

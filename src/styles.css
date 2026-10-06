@@ -116,8 +116,8 @@
 }
 :root {
   font-family: "Geist Variable", sans-serif;
-  color: #22362f;
-  background: #f7f8f4;
+  color: var(--app-text, #22362f);
+  background: var(--app-background, #f7f8f4);
   font-synthesis: none;
   font-weight: 400;
 }

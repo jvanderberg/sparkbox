@@ -10,9 +10,62 @@
       document.documentElement.classList.toggle("dark", dark);
     </script>
     <title>Sparkbox</title>
+    <style>
+      /* Shown until the app bundle has loaded; React replaces it. */
+      .splash {
+        display: grid;
+        place-items: center;
+        min-height: 100dvh;
+        font-family: system-ui, sans-serif;
+        color: #22362f;
+        background: #f7f8f4;
+      }
+      .splash {
+        gap: 14px;
+        grid-auto-rows: max-content;
+        align-content: center;
+      }
+      .splash strong {
+        font-size: 24px;
+      }
+      .splash span {
+        width: 22px;
+        height: 22px;
+        border-radius: 50%;
+        border: 3px solid #dfe5d7;
+        border-top-color: #254e3e;
+        animation: splash-spin 0.9s linear infinite;
+      }
+      @keyframes splash-spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+      @media (prefers-color-scheme: dark) {
+        .splash {
+          color: #e4e9e6;
+          background: #15181b;
+        }
+        .splash span {
+          border-color: #353c40;
+          border-top-color: #a6cbb7;
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .splash span {
+          animation: none;
+        }
+      }
+    </style>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div class="splash" role="status" aria-live="polite">
+        <strong>Sparkbox</strong>
+        <span aria-hidden="true"></span>
+        <p>Loading…</p>
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

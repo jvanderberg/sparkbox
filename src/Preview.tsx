@@ -9,10 +9,14 @@ export const previewPort = 8080;
 
 /** Where the preview iframe loads from. Must be a different origin than the app. */
 export function defaultPreviewOrigin() {
+  const configured = import.meta.env.VITE_PREVIEW_ORIGIN;
+  if (typeof configured === "string" && configured) return configured;
   const { protocol, hostname, port } = location;
   const suffix = port ? `:${port}` : "";
   if (hostname === "127.0.0.1") return `${protocol}//localhost${suffix}`;
   if (hostname === "localhost") return `${protocol}//127.0.0.1${suffix}`;
+  // Tailscale Serve publishes the same server on a second port for the preview host.
+  if (hostname.endsWith(".ts.net")) return `https://${hostname}:8443`;
   return "";
 }
 
