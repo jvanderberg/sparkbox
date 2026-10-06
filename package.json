@@ -15,7 +15,8 @@
     "format": "biome check --write .",
     "test": "vitest run",
     "check": "npm run lint && npm run typecheck && npm test && npm run build",
-    "test:browser": "tsx scripts/browser-smoke.ts"
+    "test:browser": "tsx scripts/browser-smoke.ts",
+    "test:live:anthropic": "tsx scripts/live-anthropic.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.131.0",

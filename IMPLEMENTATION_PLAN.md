@@ -14,7 +14,8 @@ Status as of 2026-10-05. Prototype only.
 
 ## Not done
 
-- [ ] Live verification of each provider adapter against a real account (needs keys; not run in CI).
+- [x] Anthropic adapter verified live on 2026-10-05 with Opus 5.5 (`npm run test:live:anthropic`): bash and text-editor tools, streamed reply, preview, changes and transcript restore after reload. Fixed a doubled-delta bug from a StrictMode double subscription.
+- [ ] Live verification of the OpenAI and OpenRouter adapters (needs keys; not run in CI).
 - [ ] GitHub: connect with a token, push through the REST Git Data API, enable Pages. Changes should then compare against the last pushed commit.
 - [ ] Outbound network: page-side npm installer that fetches tarballs from the registry into the sandbox, so `npm install` works without a WISP relay. Until then, document relay setup.
 - [ ] Lite mode for phones: esbuild-wasm build and preview without the Wasmer sandbox.

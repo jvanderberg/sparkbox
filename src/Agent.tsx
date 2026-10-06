@@ -87,10 +87,13 @@ export function Agent({
 
   useEffect(() => {
     mounted.current = true;
+    // Each effect run owns its subscription. StrictMode replays effects, and a
+    // shared flag would leave the first subscription attached and double every delta.
+    let active = true;
     let detach = () => {};
     void runner
       .attach((event) => {
-        if (!mounted.current) return;
+        if (!active || !mounted.current) return;
         if (event.type === "state") {
           setWorking(Boolean(event.working));
           setWorkingStartedAt(event.workingStartedAt);
@@ -112,9 +115,10 @@ export function Agent({
       })
       .then((unsubscribe) => {
         detach = unsubscribe;
-        if (!mounted.current) unsubscribe();
+        if (!active) unsubscribe();
       });
     return () => {
+      active = false;
       mounted.current = false;
       detach();
     };
