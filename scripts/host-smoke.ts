@@ -9,10 +9,15 @@
 import { chromium } from "playwright";
 
 const base = process.env.SPARKBOX_URL ?? "http://127.0.0.1:4320";
+// SPARKBOX_RESOLVE="host IP" pins a hostname while its DNS record propagates.
+const resolve = process.env.SPARKBOX_RESOLVE;
+const launchArgs = resolve
+  ? [`--host-resolver-rules=MAP ${resolve.split(" ")[0]} ${resolve.split(" ")[1]}`]
+  : [];
 const invite = process.env.SPARKBOX_INVITE ?? "";
 if (!invite) throw new Error("Set SPARKBOX_INVITE");
 
-const browser = await chromium.launch({ headless: true });
+const browser = await chromium.launch({ headless: true, args: launchArgs });
 const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
 const page = await context.newPage();
 const errors: string[] = [];

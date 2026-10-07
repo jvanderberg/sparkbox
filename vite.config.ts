@@ -1,6 +1,6 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
-import { dirname, join } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig, type Plugin } from "vite";
@@ -87,8 +87,84 @@ function previewHost(): Plugin {
   };
 }
 
+/**
+ * The SDK starts its worker and wasm-bindgen module by URL
+ * (`new URL("./browser-worker.js", import.meta.url)`), which Vite does not
+ * traverse: the worker ends up bundled while the binding it imports is copied
+ * raw and then looks for an unhashed wasm file that does not exist, so every
+ * sandbox process dies in production. Emit the runtime files under one
+ * versioned directory with their relative layout intact and point the two
+ * references in the SDK entry at it. Modelled on wasmer-sh's build.
+ */
+function wasmerRuntime(): Plugin {
+  const require = createRequire(import.meta.url);
+  const sdkDist = dirname(require.resolve("@wasmer/sdk/browser"));
+  const sdkRoot = resolve(sdkDist, "..");
+  const version = (
+    JSON.parse(readFileSync(join(sdkRoot, "package.json"), "utf8")) as { version: string }
+  ).version;
+  const directory = `wasmer-runtime-${version}`;
+  const entry = resolve(sdkDist, "index.js");
+  const workerUrl = "./browser-worker.js";
+  const bindingUrl = "../pkg/wasmer_sdk_js.js";
+  return {
+    name: "sparkbox-wasmer-runtime",
+    apply: "build",
+    enforce: "pre",
+    buildStart() {
+      const files = new Map<string, Buffer>();
+      const collect = (file: string) => {
+        if (files.has(file)) return;
+        const source = readFileSync(file);
+        files.set(file, source);
+        for (const match of source
+          .toString()
+          .matchAll(/(?:from|import)\s*\(?\s*["'](\.[^"']+)["']/g)) {
+          const target = resolve(dirname(file), match[1] as string);
+          if (existsSync(target) && statSync(target).isFile()) collect(target);
+        }
+      };
+      const collectDirectory = (dir: string) => {
+        for (const name of readdirSync(dir)) {
+          const file = join(dir, name);
+          if (statSync(file).isDirectory()) collectDirectory(file);
+          else files.set(file, readFileSync(file));
+        }
+      };
+      collect(resolve(sdkDist, "browser-worker.js"));
+      collect(resolve(sdkRoot, "pkg/wasmer_sdk_js.js"));
+      files.set(
+        resolve(sdkRoot, "pkg/wasmer_sdk_js_bg.wasm"),
+        readFileSync(resolve(sdkRoot, "pkg/wasmer_sdk_js_bg.wasm")),
+      );
+      if (existsSync(resolve(sdkRoot, "pkg/snippets")))
+        collectDirectory(resolve(sdkRoot, "pkg/snippets"));
+      for (const [file, source] of files)
+        this.emitFile({
+          type: "asset",
+          fileName: `${directory}/${relative(sdkRoot, file).split(sep).join("/")}`,
+          source,
+        });
+    },
+    transform(source, id) {
+      if (id !== entry) return;
+      const rewrite = (url: string, path: string) => {
+        const single = `new URL('${url}', import.meta.url)`;
+        const double = `new URL("${url}", import.meta.url)`;
+        if (!source.includes(single) && !source.includes(double))
+          this.error(`SDK runtime URL not found in ${id}: ${url}`);
+        const replacement = `new URL("/${directory}/${path}", self.location.origin)`;
+        source = source.replaceAll(single, replacement).replaceAll(double, replacement);
+      };
+      rewrite(workerUrl, "dist/browser-worker.js");
+      rewrite(bindingUrl, "pkg/wasmer_sdk_js.js");
+      return { code: source, map: null };
+    },
+  };
+}
+
 export default defineConfig({
-  plugins: [react(), tailwindcss(), previewHost()],
+  plugins: [react(), tailwindcss(), previewHost(), wasmerRuntime()],
   server: {
     port: 4320,
     strictPort: true,

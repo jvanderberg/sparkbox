@@ -10,10 +10,15 @@ import { mkdirSync } from "node:fs";
 import { chromium, devices } from "playwright";
 
 const base = process.env.SPARKBOX_URL ?? "http://127.0.0.1:4320";
+// SPARKBOX_RESOLVE="host IP" pins a hostname while its DNS record propagates.
+const resolve = process.env.SPARKBOX_RESOLVE;
+const launchArgs = resolve
+  ? [`--host-resolver-rules=MAP ${resolve.split(" ")[0]} ${resolve.split(" ")[1]}`]
+  : [];
 mkdirSync("artifacts", { recursive: true });
 
 async function run(label: string, options: { mobile?: boolean; dark?: boolean }) {
-  const browser = await chromium.launch({ headless: true });
+  const browser = await chromium.launch({ headless: true, args: launchArgs });
   const context = await browser.newContext({
     ...(options.mobile ? devices["Pixel 7"] : { viewport: { width: 1280, height: 800 } }),
     colorScheme: options.dark ? "dark" : "light",

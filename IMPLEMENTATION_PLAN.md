@@ -30,7 +30,7 @@ Status as of 2026-10-05. Prototype only.
 - [ ] Page-side npm installer for static hosting without the relay (the `download` tool is the first step).
 - [x] Screenshots in either color scheme (2026-10-06): the probe frame forces the scheme through matchMedia, root color-scheme and media-rule rewriting. Rendering switched to modern-screenshot so transforms (map panes) land exactly; verified against a native capture.
 - [ ] Lite mode for phones: esbuild-wasm build and preview without the Wasmer sandbox.
-- [ ] Production smokes against sparkbox.fly.dev once DNS propagates (browser smoke on :8443 preview, host smoke).
+- [x] Production smokes pass against https://sparkbox.fly.dev (2026-10-07): browser smoke on desktop and phone with the :8443 preview host, and host smoke (invite, proxied free-agent turn, registry fetch and pnpm add through the relay, blocked host refused). A Vite plugin now emits the SDK's worker and wasm with their layout intact; without it every sandbox process died in the production bundle.
 - [ ] Remove the leftover Civic Spark portal CSS from `src/styles.css` and the unused `claude`/`opencode` provider names in `src/agents/protocol.ts`.
 - [ ] Preview for projects that run their own dev server (expose any listening port; partly there through "Show port N").
 - [ ] Reproduce the "Scheduler is dead" crash deliberately to confirm the automatic rebuild path end to end; today it is covered by code review and the recovery wrapper only.
