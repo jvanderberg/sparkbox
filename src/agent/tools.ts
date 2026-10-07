@@ -264,12 +264,13 @@ export const pageTools = [
   {
     name: "preview",
     description:
-      "Look at the running app as the user sees it. Starts the preview if needed. format: 'screenshot' (image at the chosen viewport), 'text' (headings, links, buttons, inputs, images and visible text, plus overflow info), 'html' (current DOM), 'errors' (page errors on a fresh load plus those the user hit). viewport: 'phone' (390x844), 'tablet' (820x1180) or 'desktop' (1280x800). Screenshots use the current system color scheme only.",
+      "Look at the running app as the user sees it. Starts the preview if needed. format: 'screenshot' (image at the chosen viewport), 'text' (headings, links, buttons, inputs, images, stylesheet status and visible text, plus overflow info), 'html' (current DOM), 'errors' (page errors on a fresh load plus those the user hit). viewport: 'phone' (390x844), 'tablet' (820x1180) or 'desktop' (1280x800). scheme: 'light' or 'dark' to check that color scheme; default is the user's system setting. Screenshots are a close rendering, not a pixel-exact capture; ask the user to paste a screenshot into the chat when exact appearance matters.",
     parameters: {
       type: "object",
       properties: {
         format: { type: "string", enum: ["screenshot", "text", "html", "errors"] },
         viewport: { type: "string", enum: ["phone", "tablet", "desktop"] },
+        scheme: { type: "string", enum: ["light", "dark"] },
         path: { type: "string", description: "Page path to open, default /" },
       },
       required: ["format"],
@@ -340,6 +341,11 @@ export async function previewTool(
       : "desktop"
   ) as PreviewViewport;
   const path = typeof args.path === "string" && args.path.startsWith("/") ? args.path : "/";
+  const scheme =
+    args.scheme === "light" || args.scheme === "dark"
+      ? (args.scheme as "light" | "dark")
+      : undefined;
+  const schemeNote = scheme ? `${scheme} scheme (forced)` : "the user's system color scheme";
   try {
     await controller.ensureRunning();
   } catch (error) {
@@ -351,10 +357,10 @@ export async function previewTool(
   try {
     switch (format) {
       case "screenshot": {
-        const result = await controller.query({ format: "screenshot", viewport, path });
+        const result = await controller.query({ format: "screenshot", viewport, path, scheme });
         if (result.format !== "screenshot") throw new Error("unexpected result");
         return {
-          output: `Screenshot of ${path} at ${viewport} size (${result.width}x${result.height}), current system color scheme.`,
+          output: `Screenshot of ${path} at ${viewport} size (${result.width}x${result.height}), ${schemeNote}, rendered by ${result.renderer}. ${result.images.loaded} of ${result.images.total} images had loaded${result.images.loaded < result.images.total ? "; retake if the missing ones matter" : ""}. A close rendering, not a pixel-exact capture.`,
           image: {
             data: result.image,
             mime: result.mime,
@@ -364,12 +370,12 @@ export async function previewTool(
         };
       }
       case "html": {
-        const result = await controller.query({ format: "html", viewport, path });
+        const result = await controller.query({ format: "html", viewport, path, scheme });
         if (result.format !== "html") throw new Error("unexpected result");
         return { output: truncate(result.html, 60_000) };
       }
       case "errors": {
-        const result = await controller.query({ format: "errors", viewport, path });
+        const result = await controller.query({ format: "errors", viewport, path, scheme });
         if (result.format !== "errors") throw new Error("unexpected result");
         const recent = controller.recentErrors();
         return {
@@ -380,7 +386,7 @@ export async function previewTool(
         };
       }
       default: {
-        const result = await controller.query({ format: "text", viewport, path });
+        const result = await controller.query({ format: "text", viewport, path, scheme });
         if (result.format !== "text") throw new Error("unexpected result");
         return { output: truncate(result.text, 20_000) };
       }

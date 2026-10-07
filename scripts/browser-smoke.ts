@@ -130,10 +130,16 @@ async function run(label: string, options: { mobile?: boolean; dark?: boolean })
   const tool = await page.evaluate(async () => {
     const query = (
       window as unknown as {
-        sparkboxPreviewTool: (request: { format: string; viewport?: string }) => Promise<unknown>;
+        sparkboxPreviewTool: (request: {
+          format: string;
+          viewport?: string;
+          scheme?: string;
+        }) => Promise<unknown>;
       }
     ).sparkboxPreviewTool;
-    const text = (await query({ format: "text", viewport: "phone" })) as { text: string };
+    const text = (await query({ format: "text", viewport: "phone", scheme: "dark" })) as {
+      text: string;
+    };
     const errors = (await query({ format: "errors" })) as { errors: string[] };
     const shot = (await query({ format: "screenshot", viewport: "phone" })) as {
       image: string;
@@ -141,7 +147,7 @@ async function run(label: string, options: { mobile?: boolean; dark?: boolean })
       height: number;
     };
     return {
-      text: text.text.slice(0, 300),
+      text: text.text.slice(0, 400),
       errors: errors.errors,
       width: shot.width,
       height: shot.height,
@@ -149,7 +155,11 @@ async function run(label: string, options: { mobile?: boolean; dark?: boolean })
     };
   });
   console.log(`${label} preview tool:`, JSON.stringify({ ...tool, text: tool.text.slice(0, 120) }));
-  if (!tool.text.includes(`# Smoke ${label}`) || !tool.text.includes("[button] Clicked"))
+  if (
+    !tool.text.includes(`# Smoke ${label}`) ||
+    !tool.text.includes("[button] Clicked") ||
+    !tool.text.includes("Color scheme: dark (forced)")
+  )
     throw new Error(`preview text outline is wrong: ${tool.text}`);
   if (tool.errors.length) throw new Error(`fresh load reported errors: ${tool.errors.join(", ")}`);
   if (tool.width !== 390 || tool.height !== 844 || tool.bytes < 2000)

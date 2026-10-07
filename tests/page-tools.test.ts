@@ -53,6 +53,8 @@ describe("preview tool", () => {
               mime: "image/jpeg",
               width: 390,
               height: 844,
+              renderer: "test",
+              images: { total: 3, loaded: 3 },
             };
           case "text":
             return { format: "text", text: "Title: App\n\nElements:\n# Hello" };
@@ -66,9 +68,13 @@ describe("preview tool", () => {
   }
   it("returns images for screenshots and text for the other formats", async () => {
     const preview = controller();
-    const shot = await previewTool(preview, { format: "screenshot", viewport: "phone" });
+    const shot = await previewTool(preview, {
+      format: "screenshot",
+      viewport: "phone",
+      scheme: "dark",
+    });
     expect(shot.image?.data).toBe("QUJD");
-    expect(shot.output).toMatch(/phone size \(390x844\)/);
+    expect(shot.output).toMatch(/phone size \(390x844\), dark scheme \(forced\)/);
     expect(preview.requests[0]).toMatchObject({
       format: "screenshot",
       viewport: "phone",

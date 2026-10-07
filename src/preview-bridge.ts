@@ -17,6 +17,8 @@ export type PreviewRequest = {
   viewport?: PreviewViewport;
   /** Page path under the preview origin, default `/`. */
   path?: string;
+  /** Force a color scheme in the probe frame; default is the system setting. */
+  scheme?: "light" | "dark";
   limit?: number;
 };
 
@@ -24,7 +26,16 @@ export type PreviewResult =
   | { format: "text"; text: string }
   | { format: "html"; html: string }
   | { format: "errors"; errors: string[] }
-  | { format: "screenshot"; image: string; mime: "image/jpeg"; width: number; height: number };
+  | {
+      format: "screenshot";
+      image: string;
+      mime: "image/jpeg";
+      width: number;
+      height: number;
+      renderer: string;
+      /** Images in the page and how many had loaded when the capture ran. */
+      images: { total: number; loaded: number };
+    };
 
 export async function queryPreview(
   previewUrl: string,
@@ -33,11 +44,13 @@ export async function queryPreview(
 ): Promise<PreviewResult> {
   const [width, height] = previewViewports[request.viewport ?? "desktop"];
   const target = new URL(request.path ?? "/", previewUrl);
-  target.hash = "sparkbox-probe";
+  target.hash = request.scheme ? `sparkbox-probe&scheme=${request.scheme}` : "sparkbox-probe";
   const frame = document.createElement("iframe");
   frame.setAttribute("aria-hidden", "true");
   frame.tabIndex = -1;
-  frame.style.cssText = `position:fixed;left:-20000px;top:0;width:${width}px;height:${height}px;border:0;opacity:0;pointer-events:none;`;
+  // Kept inside the viewport, behind the app: Chrome stops requestAnimationFrame
+  // in offscreen frames, which freezes fade-ins such as map tiles mid-way.
+  frame.style.cssText = `position:fixed;left:0;top:0;width:${width}px;height:${height}px;border:0;z-index:-1;pointer-events:none;visibility:visible;`;
   frame.sandbox.add("allow-scripts", "allow-same-origin", "allow-forms");
   const origin = new URL(previewUrl).origin;
   const id = crypto.randomUUID();
@@ -102,6 +115,11 @@ export async function queryPreview(
               mime: "image/jpeg",
               width: Number(result.width ?? width),
               height: Number(result.height ?? height),
+              renderer: String(result.renderer ?? "unknown"),
+              images: {
+                total: Number((result.images as { total?: number })?.total ?? 0),
+                loaded: Number((result.images as { loaded?: number })?.loaded ?? 0),
+              },
             });
           }
         }

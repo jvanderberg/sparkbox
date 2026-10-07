@@ -26,7 +26,7 @@ Status as of 2026-10-05. Prototype only.
 - [ ] Live verification of the OpenAI adapter (needs a key; not run in CI).
 - [ ] GitHub: connect with a token, push through the REST Git Data API, enable Pages. Changes should then compare against the last pushed commit.
 - [ ] Outbound network: page-side npm installer that fetches tarballs from the registry into the sandbox, so `npm install` works without a WISP relay. The `download` tool is the first step; an installer would resolve the dependency tree and unpack into node_modules.
-- [ ] Screenshots in the other color scheme (a hidden frame cannot change prefers-color-scheme; would need a CSS override hook).
+- [x] Screenshots in either color scheme (2026-10-06): the probe frame forces the scheme through matchMedia, root color-scheme and media-rule rewriting. Rendering switched to modern-screenshot so transforms (map panes) land exactly; verified against a native capture.
 - [ ] Lite mode for phones: esbuild-wasm build and preview without the Wasmer sandbox.
 - [ ] A deployed demo with two hostnames (app and preview host).
 - [ ] Remove the leftover Civic Spark portal CSS from `src/styles.css` and the unused `claude`/`opencode` provider names in `src/agents/protocol.ts`.
