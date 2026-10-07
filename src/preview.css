@@ -78,3 +78,36 @@
   color: inherit;
   cursor: pointer;
 }
+/* Full-window preview: the workspace hides everything but this panel. */
+.workspace-screen.preview-full > :not(.preview-panel) {
+  display: none;
+}
+.workspace-screen.preview-full > .preview-panel {
+  flex: 1;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+}
+.preview-exit-full {
+  position: absolute;
+  top: max(8px, env(safe-area-inset-top));
+  right: max(8px, env(safe-area-inset-right));
+  z-index: 30;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 0 14px;
+  border-radius: 999px;
+  border: 1px solid var(--app-border);
+  background: var(--app-surface);
+  color: var(--app-text);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+  box-shadow: 0 6px 20px rgb(0 0 0 / 0.2);
+}
+.preview-panel {
+  position: relative;
+}

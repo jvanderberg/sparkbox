@@ -123,6 +123,24 @@ async function run(label: string, options: { mobile?: boolean; dark?: boolean })
     }, 0);
   });
   await page.getByText(/1 page error/).waitFor({ timeout: 10_000 });
+  // Full-screen preview hides the chrome and fills the window; Esc exits.
+  const fullScreen = page.getByRole("button", { name: "Full screen" });
+  if (await fullScreen.isVisible()) {
+    await fullScreen.click();
+    await page.getByRole("button", { name: "Exit full screen" }).waitFor();
+    const frameBox = await frame.boundingBox();
+    const viewport = page.viewportSize();
+    if (
+      !frameBox ||
+      !viewport ||
+      frameBox.width < viewport.width - 4 ||
+      frameBox.height < viewport.height * 0.9
+    )
+      throw new Error(`full-screen preview does not fill the window: ${JSON.stringify(frameBox)}`);
+    await page.screenshot({ path: `artifacts/smoke-${label}-preview-full.png` });
+    await page.keyboard.press("Escape");
+    await page.getByRole("button", { name: "Exit full screen" }).waitFor({ state: "detached" });
+  }
   await page.screenshot({ path: `artifacts/smoke-${label}-preview.png` });
   await page.getByRole("button", { name: "Clear page errors" }).click();
   // The agent's preview tool: a text outline, the error list and a phone screenshot

@@ -1,5 +1,5 @@
 import type { Process } from "@wasmer/sdk/browser";
-import { ExternalLink, Play, ScrollText, Square } from "lucide-react";
+import { Maximize2, Minimize2, Play, ScrollText, Square } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { serveScript } from "./sandbox/serve-script.ts";
 import type { WasmerSandbox } from "./sandbox/wasmer.ts";
@@ -182,11 +182,14 @@ export function PreviewControls({
   preview,
   disabled,
   onShow,
+  onFullScreen,
 }: {
   preview: ReturnType<typeof usePreview>;
   disabled: boolean;
   /** Called when a preview is started or exposed, so the panel can be shown. */
   onShow: () => void;
+  /** Fill the window with the preview panel. */
+  onFullScreen: () => void;
 }) {
   const [logsOpen, setLogsOpen] = useState(false);
   return (
@@ -214,9 +217,13 @@ export function PreviewControls({
         </button>
       )}
       {preview.url && (
-        <a className="button small" href={preview.url} target="_blank" rel="noreferrer">
-          <ExternalLink size={14} /> Open
-        </a>
+        // Not a link to a new tab: the preview exists only through a service
+        // worker registered inside a third-party frame, and browsers that
+        // partition storage by top-level site (Safari, Chrome with third-party
+        // blocking) would serve the app page there instead.
+        <button type="button" className="button small" onClick={onFullScreen}>
+          <Maximize2 size={14} /> Full screen
+        </button>
       )}
       {preview.ports
         .filter((port) => port !== previewPort || !preview.url)
@@ -254,12 +261,27 @@ export function PreviewControls({
 export function PreviewPanel({
   preview,
   visible,
+  full = false,
+  onExitFullScreen,
 }: {
   preview: ReturnType<typeof usePreview>;
   visible: boolean;
+  full?: boolean;
+  onExitFullScreen?: () => void;
 }) {
   return (
     <section className="workspace-panel preview-panel" aria-label="Preview" hidden={!visible}>
+      {full && (
+        <button
+          type="button"
+          className="preview-exit-full"
+          onClick={onExitFullScreen}
+          aria-label="Exit full screen"
+          title="Exit full screen (Esc)"
+        >
+          <Minimize2 size={16} /> Exit full screen
+        </button>
+      )}
       {preview.error && (
         <p className="preview-error" role="alert">
           {preview.error}

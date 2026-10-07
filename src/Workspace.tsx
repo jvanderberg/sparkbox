@@ -64,6 +64,15 @@ export function Workspace({
     }
   }, [workspace, view]);
   const screen = useWorkspaceViewport();
+  const [previewFull, setPreviewFull] = useState(false);
+  useEffect(() => {
+    if (!previewFull) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setPreviewFull(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [previewFull]);
   const [agentWorking, setAgentWorking] = useState(false);
   const uploadInput = useRef<HTMLInputElement>(null);
   const [changes, setChanges] = useState<WorkspaceChanges | null>(null);
@@ -253,7 +262,10 @@ export function Workspace({
   }
 
   return (
-    <main ref={screen} className="workspace-screen">
+    <main
+      ref={screen}
+      className={`workspace-screen${previewFull && view === "preview" ? " preview-full" : ""}`}
+    >
       <header className="workspace-header">
         <h1>{name}</h1>
         <MobileMenu label="Workspace controls">
@@ -268,7 +280,15 @@ export function Workspace({
           </button>
           <span className="workspace-privacy">Runs in this browser</span>
           <Badge tone="green">Sandbox ready</Badge>
-          <PreviewControls preview={preview} disabled={busy} onShow={() => setView("preview")} />
+          <PreviewControls
+            preview={preview}
+            disabled={busy}
+            onShow={() => setView("preview")}
+            onFullScreen={() => {
+              setView("preview");
+              setPreviewFull(true);
+            }}
+          />
           <button type="button" className="button small" onClick={onSettings}>
             Settings
           </button>
@@ -317,7 +337,12 @@ export function Workspace({
           void open(path);
         }}
       />
-      <PreviewPanel preview={preview} visible={view === "preview"} />
+      <PreviewPanel
+        preview={preview}
+        visible={view === "preview"}
+        full={previewFull && view === "preview"}
+        onExitFullScreen={() => setPreviewFull(false)}
+      />
       <div className="workspace-files" hidden={view !== "files"}>
         {externalChange && (
           <p className="auth-pending" role="status">
