@@ -21,7 +21,7 @@ const inviteCodes = (env.SPARKBOX_INVITE_CODES ?? "")
   .map((code) => code.trim())
   .filter(Boolean);
 const openRouterKey = env.SPARKBOX_OPENROUTER_KEY ?? "";
-const freeModel = env.SPARKBOX_FREE_MODEL ?? "z-ai/glm-5.3-flash";
+const freeModel = env.SPARKBOX_FREE_MODEL ?? "anthropic/claude-haiku-5.5";
 const freeLabel = env.SPARKBOX_FREE_LABEL ?? "Sparkbox";
 const publicOrigin = env.SPARKBOX_PUBLIC_ORIGIN ?? ""; // e.g. https://sparkbox.fly.dev
 const previewOrigin = env.SPARKBOX_PREVIEW_ORIGIN ?? (publicOrigin ? `${publicOrigin}:8443` : "");

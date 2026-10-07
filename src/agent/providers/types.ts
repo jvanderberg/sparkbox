@@ -10,10 +10,10 @@ export const providers: Record<
 > = {
   sparkbox: {
     label: "Sparkbox",
-    defaultModel: "z-ai/glm-5.3-flash",
+    defaultModel: "anthropic/claude-haiku-5.5",
     credential: "Invite code",
     keyHint: "Invite code from the person who shared this",
-    models: ["z-ai/glm-5.3-flash"],
+    models: ["anthropic/claude-haiku-5.5"],
   },
   anthropic: {
     label: "Claude",

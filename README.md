@@ -35,7 +35,7 @@ The deployed site is https://sparkbox.fly.dev. One small Fly machine runs `serve
 - serves the built app on port 8080 (public 443) and the preview host on port 8081 (public 8443, a second origin for the sandbox's service worker);
 - publishes `/config.json` so the app learns the preview origin, the relay URL and whether the free agent is on;
 - mints signed invite tokens at `POST /api/invite` from `SPARKBOX_INVITE_CODES`;
-- proxies the **Sparkbox** provider at `/api/agent/chat/completions` to OpenRouter with the server-held key, a fixed cheap model and daily limits per token and overall;
+- proxies the **Sparkbox** provider at `/api/agent/chat/completions` to OpenRouter with the server-held key, a fixed cheap model (`SPARKBOX_FREE_MODEL`, default Claude Haiku 5.5) and daily limits per token and overall;
 - relays WISP at `/wisp/<token>/` so the sandbox gets outbound TCP to an allowlist of package registries and CDNs, enforced on the TLS server name of each stream.
 
 It stores nothing. Tokens are HMAC-signed, counters live in memory, and the machine stops when idle (`auto_stop_machines`). Secrets: `SPARKBOX_TOKEN_SECRET`, `SPARKBOX_INVITE_CODES`, `SPARKBOX_OPENROUTER_KEY`. Deploy with `fly deploy --remote-only --ha=false`. Static-only hosting (no server) still works; the app then has no free agent and no relay, and the preview origin must be set in Settings.
