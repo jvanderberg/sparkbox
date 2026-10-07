@@ -476,7 +476,7 @@ export function Agent({
                     <input
                       ref={fileInput}
                       type="file"
-                      accept="image/png,image/jpeg,image/webp"
+                      accept="image/*"
                       multiple
                       hidden
                       aria-label="Choose images"

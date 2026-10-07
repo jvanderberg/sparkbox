@@ -32,6 +32,36 @@ async function run(label: string, options: { mobile?: boolean; dark?: boolean })
   // On phones the status badge sits inside the collapsed menu.
   await page.getByText("Sandbox ready").waitFor({ state: "attached", timeout: 180_000 });
   const tabs = page.locator("nav.workspace-tabs");
+  // A large photo-sized PNG attaches without a size complaint: it is downscaled.
+  const bigImage = await page.evaluate(async () => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 4000;
+    canvas.height = 3000;
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("no canvas");
+    const pixels = context.createImageData(4000, 3000);
+    for (let i = 0; i < pixels.data.length; i++) pixels.data[i] = (Math.random() * 256) | 0;
+    context.putImageData(pixels, 0, 0);
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
+    if (!blob) throw new Error("no blob");
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    let binary = "";
+    for (let i = 0; i < bytes.length; i += 8192)
+      binary += String.fromCharCode(...bytes.subarray(i, i + 8192));
+    return { base64: btoa(binary), size: bytes.length };
+  });
+  console.log(`${label} attaching a ${(bigImage.size / 1e6).toFixed(1)} MB PNG`);
+  await page.getByLabel("Choose images").setInputFiles({
+    name: "photo.png",
+    mimeType: "image/png",
+    buffer: Buffer.from(bigImage.base64, "base64"),
+  });
+  await page.getByRole("button", { name: /Remove photo\.png/ }).waitFor({ timeout: 60_000 });
+  if (await page.locator(".chat-feedback.error").count())
+    throw new Error(
+      `attaching a large image showed an error: ${await page.locator(".chat-feedback.error").innerText()}`,
+    );
+  await page.getByRole("button", { name: /Remove photo\.png/ }).click();
   await page.screenshot({ path: `artifacts/smoke-${label}-agent.png` });
   await tabs.getByRole("button", { name: "Files" }).click();
   // Phones start with the explorer collapsed to a rail.
