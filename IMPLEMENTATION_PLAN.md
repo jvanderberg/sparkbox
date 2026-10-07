@@ -19,16 +19,18 @@ Status as of 2026-10-05. Prototype only.
 - [x] Agent preamble ported from Civic Spark's workspace guidance (2026-10-06).
 - [x] Page-side tools (2026-10-06): `download` saves URLs into the project through the browser's fetch; `preview` returns screenshots at phone/tablet/desktop sizes, a text outline, HTML or errors from hidden probe frames served by the same sandbox. Covered by unit tests and the browser smoke.
 
+- [x] Hosted on Fly (2026-10-07): `server/main.ts` serves the app and the preview host (port 8443 as the second origin), publishes `/config.json`, mints invite tokens, proxies the free "Sparkbox" provider to OpenRouter with a server key and daily limits, and relays WISP with a TLS-server-name allowlist. Verified locally end to end (`scripts/host-smoke.ts`): invite, proxied model turn, registry fetch and `pnpm add` through the relay, blocked host refused.
+
 ## Not done
 
 - [x] Anthropic adapter verified live on 2026-10-05 with Opus 5.5 (`npm run test:live:anthropic`): bash and text-editor tools, streamed reply, preview, changes and transcript restore after reload. Fixed a doubled-delta bug from a StrictMode double subscription.
 - [x] OpenRouter adapter verified live on 2026-10-05 with `z-ai/glm-5.3-flash` (`npm run test:live:openrouter`): function tools, streamed reply, preview, changes and transcript restore.
 - [ ] Live verification of the OpenAI adapter (needs a key; not run in CI).
 - [ ] GitHub: connect with a token, push through the REST Git Data API, enable Pages. Changes should then compare against the last pushed commit.
-- [ ] Outbound network: page-side npm installer that fetches tarballs from the registry into the sandbox, so `npm install` works without a WISP relay. The `download` tool is the first step; an installer would resolve the dependency tree and unpack into node_modules.
+- [ ] Page-side npm installer for static hosting without the relay (the `download` tool is the first step).
 - [x] Screenshots in either color scheme (2026-10-06): the probe frame forces the scheme through matchMedia, root color-scheme and media-rule rewriting. Rendering switched to modern-screenshot so transforms (map panes) land exactly; verified against a native capture.
 - [ ] Lite mode for phones: esbuild-wasm build and preview without the Wasmer sandbox.
-- [ ] A deployed demo with two hostnames (app and preview host).
+- [ ] Production smokes against sparkbox.fly.dev once DNS propagates (browser smoke on :8443 preview, host smoke).
 - [ ] Remove the leftover Civic Spark portal CSS from `src/styles.css` and the unused `claude`/`opencode` provider names in `src/agents/protocol.ts`.
 - [ ] Preview for projects that run their own dev server (expose any listening port; partly there through "Show port N").
 - [ ] Reproduce the "Scheduler is dead" crash deliberately to confirm the automatic rebuild path end to end; today it is covered by code review and the recovery wrapper only.

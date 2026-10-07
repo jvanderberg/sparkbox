@@ -2,12 +2,19 @@ import type { AgentImage } from "../../agents/images.ts";
 import type { Sandbox } from "../../sandbox/types.ts";
 import type { PreviewController } from "../preview-controller.ts";
 
-export type ProviderId = "anthropic" | "openai" | "openrouter";
+export type ProviderId = "sparkbox" | "anthropic" | "openai" | "openrouter";
 
 export const providers: Record<
   ProviderId,
   { label: string; defaultModel: string; credential: string; keyHint: string; models: string[] }
 > = {
+  sparkbox: {
+    label: "Sparkbox",
+    defaultModel: "z-ai/glm-5.3-flash",
+    credential: "Invite code",
+    keyHint: "Invite code from the person who shared this",
+    models: ["z-ai/glm-5.3-flash"],
+  },
   anthropic: {
     label: "Claude",
     defaultModel: "claude-opus-5-5",

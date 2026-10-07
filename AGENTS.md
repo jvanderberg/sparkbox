@@ -3,7 +3,7 @@
 Sparkbox is a zero-server, browser-only derivative of Civic Spark. Keep its UI and interaction rules; the runtime is different.
 
 - React and TypeScript throughout; npm and its lockfile; Vite; Tailwind; Biome. Strict types and explicit errors.
-- **Zero server.** The app is a static site. No management host, no database, no proxy. If a feature needs a server, say so in the plan rather than adding one quietly. The only external services are the model providers, OpenRouter's OAuth endpoint, and (later) GitHub's REST API, all called from the page.
+- **Stateless host.** The app is a static site plus one stateless process (`server/`) that holds the free agent's key, mints invite tokens, and relays sandbox networking to an allowlist. It stores no user data: tokens are signed, counters are in memory. Do not add a database, accounts or server-side files. Everything else (files, keys, transcripts) stays in the browser, and the app must keep working as a static site without the host (no free agent, no relay).
 - **Keys stay in the browser.** Provider keys live in localStorage and go only to that provider. Never write them into the sandbox filesystem, project files, exports, logs or the transcript.
 - **Participant code runs only in the sandbox.** The Wasmer sandbox in the page is the execution environment; the preview iframe is on a separate origin. Never execute project code in the app's own JavaScript context.
 - **Use each provider's native coding tools.** Anthropic: `bash_20250124` and `text_editor_20250728`. OpenAI: `shell` and `apply_patch` on the Responses API. OpenRouter: the generic function tools. Do not invent provider-specific prompts that fight the tool schemas.

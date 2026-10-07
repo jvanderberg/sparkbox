@@ -9,6 +9,7 @@ import { settings } from "./agent/settings.ts";
 import { retainEvent } from "./agents/history.ts";
 import { type AgentImage, agentImagesSchema, imageCountLimit } from "./agents/images.ts";
 import { type AgentEvent, agentQueueLimit, type QueuedPrompt } from "./agents/protocol.ts";
+import { type HostConfig, hostConfig, redeemInvite } from "./config.ts";
 import { Button } from "./vendor/t3code/Button.tsx";
 import { ComposerBanner } from "./vendor/t3code/ComposerBanner.tsx";
 import { ComposerPrimaryActions } from "./vendor/t3code/ComposerPrimaryActions.tsx";
@@ -54,7 +55,15 @@ export function Agent({
     return () => resize.disconnect();
   }, []);
   const [events, setEvents] = useState<AgentEvent[]>([]);
+  const [host, setHost] = useState<HostConfig | null>(null);
+  useEffect(() => {
+    void hostConfig().then(setHost);
+  }, []);
   const [provider, setProvider] = useState<ProviderId>(() => settings.provider());
+  // The free agent only exists where the host enables it.
+  useEffect(() => {
+    if (host && !host.freeAgent && provider === "sparkbox") setProvider("anthropic");
+  }, [host, provider]);
   const [model, setModel] = useState(() => settings.model(provider));
   const [key, setKey] = useState("");
   const [hasKey, setHasKey] = useState(() => Boolean(settings.key(provider)));
@@ -229,9 +238,24 @@ export function Agent({
     setQueued([]);
     runner.send({ type: "stop" });
   }
-  function saveKey() {
+  const [redeeming, setRedeeming] = useState(false);
+  async function saveKey() {
     const value = key.trim();
     if (!value) return;
+    if (provider === "sparkbox") {
+      setRedeeming(true);
+      try {
+        settings.setKey("sparkbox", await redeemInvite(value));
+        setHasKey(true);
+        setKey("");
+        setError("");
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : "The invite code was not accepted.");
+      } finally {
+        setRedeeming(false);
+      }
+      return;
+    }
     settings.setKey(provider, value);
     setHasKey(true);
     setKey("");
@@ -242,7 +266,11 @@ export function Agent({
     setHasKey(false);
   }
 
-  const info = providers[provider];
+  const info =
+    provider === "sparkbox" && host?.freeAgent
+      ? { ...providers.sparkbox, label: host.freeAgent.label, models: [host.freeAgent.model] }
+      : providers[provider];
+  const visibleProviders = providerIds.filter((id) => id !== "sparkbox" || host?.freeAgent);
   return (
     <section className="workspace-panel agent-panel" hidden={!visible}>
       <header className="chat-header">
@@ -334,19 +362,23 @@ export function Agent({
                     <div className="chat-connection">
                       <div>
                         <strong>Connect {info.label}</strong>
-                        <span>{model}</span>
+                        <span>{provider === "sparkbox" ? info.models[0] : model}</span>
                       </div>
                       <form
                         onSubmit={(event) => {
                           event.preventDefault();
-                          saveKey();
+                          void saveKey();
                         }}
                       >
                         {hasKey ? (
-                          <span className="chat-saved-key">API key saved in this browser</span>
+                          <span className="chat-saved-key">
+                            {provider === "sparkbox"
+                              ? "Invite accepted in this browser"
+                              : "API key saved in this browser"}
+                          </span>
                         ) : (
                           <input
-                            type="password"
+                            type={provider === "sparkbox" ? "text" : "password"}
                             aria-label={info.credential}
                             autoComplete="off"
                             value={key}
@@ -356,11 +388,20 @@ export function Agent({
                         )}
                         {hasKey ? (
                           <Button size="xs" variant="outline" type="button" onClick={clearKey}>
-                            Remove key
+                            {provider === "sparkbox" ? "Forget invite" : "Remove key"}
                           </Button>
                         ) : (
-                          <Button size="xs" variant="outline" type="submit" disabled={!key.trim()}>
-                            Save key
+                          <Button
+                            size="xs"
+                            variant="outline"
+                            type="submit"
+                            disabled={!key.trim() || redeeming}
+                          >
+                            {provider === "sparkbox"
+                              ? redeeming
+                                ? "Checking…"
+                                : "Use invite"
+                              : "Save key"}
                           </Button>
                         )}
                       </form>
@@ -374,27 +415,30 @@ export function Agent({
                           Sign in with OpenRouter
                         </Button>
                       )}
-                      <label className="chat-workspace-id">
-                        Model
-                        <input
-                          aria-label="Model"
-                          list={`models-${provider}`}
-                          autoComplete="off"
-                          value={model}
-                          onChange={(event) => {
-                            setModel(event.target.value);
-                            settings.setModel(provider, event.target.value);
-                          }}
-                        />
-                        <datalist id={`models-${provider}`}>
-                          {info.models.map((name) => (
-                            <option key={name} value={name} />
-                          ))}
-                        </datalist>
-                      </label>
+                      {provider !== "sparkbox" && (
+                        <label className="chat-workspace-id">
+                          Model
+                          <input
+                            aria-label="Model"
+                            list={`models-${provider}`}
+                            autoComplete="off"
+                            value={model}
+                            onChange={(event) => {
+                              setModel(event.target.value);
+                              settings.setModel(provider, event.target.value);
+                            }}
+                          />
+                          <datalist id={`models-${provider}`}>
+                            {info.models.map((name) => (
+                              <option key={name} value={name} />
+                            ))}
+                          </datalist>
+                        </label>
+                      )}
                       <small>
-                        Keys stay in this browser's storage and go only to {info.label}. Usage is
-                        billed to your account.
+                        {provider === "sparkbox"
+                          ? `Free to use with an invite, on ${info.models[0]}. Daily limits apply; add your own key for more.`
+                          : `Keys stay in this browser's storage and go only to ${info.label}. Usage is billed to your account.`}
                       </small>
                       {hasConversation && (
                         <Button
@@ -505,9 +549,11 @@ export function Agent({
                         setError("");
                       }}
                     >
-                      {providerIds.map((id) => (
+                      {visibleProviders.map((id) => (
                         <option key={id} value={id}>
-                          {providers[id].label}
+                          {id === "sparkbox" && host?.freeAgent
+                            ? host.freeAgent.label
+                            : providers[id].label}
                         </option>
                       ))}
                     </select>

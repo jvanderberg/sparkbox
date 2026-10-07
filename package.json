@@ -18,7 +18,9 @@
     "test:browser": "tsx scripts/browser-smoke.ts",
     "test:live:anthropic": "tsx scripts/live-turn.ts anthropic",
     "test:live:openai": "tsx scripts/live-turn.ts openai",
-    "test:live:openrouter": "tsx scripts/live-turn.ts openrouter"
+    "test:live:openrouter": "tsx scripts/live-turn.ts openrouter",
+    "dev:server": "node --experimental-strip-types server/main.ts",
+    "start": "node --experimental-strip-types server/main.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.131.0",
@@ -36,6 +38,7 @@
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
     "tailwind-merge": "^3.5.0",
+    "ws": "^8.22.0",
     "zod": "^4.6.5"
   },
   "devDependencies": {
@@ -45,6 +48,7 @@
     "@types/node": "^24.19.1",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
+    "@types/ws": "^8.18.2",
     "@vitejs/plugin-react": "^6.1.2",
     "playwright": "^1.63.0",
     "tailwindcss": "^4.3.3",

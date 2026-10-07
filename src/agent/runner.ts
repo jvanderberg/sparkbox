@@ -110,7 +110,7 @@ export class AgentRunner {
         for (const session of this.sessions.values()) session.reset();
         this.sessions.clear();
         void kv.delete("transcripts", this.options.workspace);
-        for (const provider of ["anthropic", "openai", "openrouter"] as ProviderId[])
+        for (const provider of ["sparkbox", "anthropic", "openai", "openrouter"] as ProviderId[])
           void kv.delete("sessions", `${this.options.workspace}:${provider}`);
         this.emit(this.stateEvent());
         return;
@@ -137,7 +137,7 @@ export class AgentRunner {
   }
 
   private session(provider: ProviderId): ProviderSession {
-    const model = settings.model(provider);
+    const model = provider === "sparkbox" ? "sparkbox" : settings.model(provider);
     const id = `${provider}:${model}`;
     let session = this.sessions.get(id);
     if (!session) {
@@ -150,7 +150,12 @@ export class AgentRunner {
             ? new AnthropicSession(key, model)
             : provider === "openai"
               ? new OpenAISession(key, model)
-              : new OpenRouterSession(key, model);
+              : provider === "sparkbox"
+                ? new OpenRouterSession(key, model, {
+                    baseURL: `${location.origin}/api/agent`,
+                    provider: "sparkbox",
+                  })
+                : new OpenRouterSession(key, model);
       }
       // Keep the thread when only the model changed within a provider.
       for (const [other, existing] of this.sessions)
@@ -301,7 +306,7 @@ export class AgentRunner {
   private async restore() {
     const transcript = await kv.get<AgentEvent[]>("transcripts", this.options.workspace);
     if (transcript) for (const event of transcript) retainEvent(this.events, event);
-    for (const provider of ["anthropic", "openai", "openrouter"] as ProviderId[]) {
+    for (const provider of ["sparkbox", "anthropic", "openai", "openrouter"] as ProviderId[]) {
       const state = await kv.get("sessions", `${this.options.workspace}:${provider}`);
       if (!state || !settings.key(provider)) continue;
       try {

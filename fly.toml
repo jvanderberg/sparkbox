@@ -1,0 +1,48 @@
+app = "sparkbox"
+primary_region = "ord"
+
+[build]
+
+[env]
+  PORT = "8080"
+  SPARKBOX_PREVIEW_PORT = "8081"
+  SPARKBOX_PUBLIC_ORIGIN = "https://sparkbox.fly.dev"
+
+# The app and its API on the standard ports.
+[[services]]
+  internal_port = 8080
+  protocol = "tcp"
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+  [[services.ports]]
+    port = 80
+    handlers = ["http"]
+    force_https = true
+  [[services.ports]]
+    port = 443
+    handlers = ["tls", "http"]
+  [services.concurrency]
+    type = "connections"
+    hard_limit = 500
+    soft_limit = 300
+  [[services.http_checks]]
+    path = "/healthz"
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "10s"
+
+# The preview host: a second origin on port 8443.
+[[services]]
+  internal_port = 8081
+  protocol = "tcp"
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+  [[services.ports]]
+    port = 8443
+    handlers = ["tls", "http"]
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"

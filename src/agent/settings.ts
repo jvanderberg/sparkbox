@@ -37,7 +37,7 @@ export const settings = {
   },
   provider(): ProviderId {
     const value = read("provider");
-    return value in providers ? (value as ProviderId) : "anthropic";
+    return value in providers ? (value as ProviderId) : "sparkbox";
   },
   setProvider(value: ProviderId) {
     write("provider", value);

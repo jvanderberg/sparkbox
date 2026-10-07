@@ -28,6 +28,20 @@ Besides each provider's native file and shell tools, the agent gets two tools th
 
 Keys are stored only in this browser and are sent only to that provider. All three providers accept browser requests directly, so no proxy is involved. Usage is billed to the user's own account.
 
+## Hosted on Fly
+
+The deployed site is https://sparkbox.fly.dev. One small Fly machine runs `server/main.ts`, which:
+
+- serves the built app on port 8080 (public 443) and the preview host on port 8081 (public 8443, a second origin for the sandbox's service worker);
+- publishes `/config.json` so the app learns the preview origin, the relay URL and whether the free agent is on;
+- mints signed invite tokens at `POST /api/invite` from `SPARKBOX_INVITE_CODES`;
+- proxies the **Sparkbox** provider at `/api/agent/chat/completions` to OpenRouter with the server-held key, a fixed cheap model and daily limits per token and overall;
+- relays WISP at `/wisp/<token>/` so the sandbox gets outbound TCP to an allowlist of package registries and CDNs, enforced on the TLS server name of each stream.
+
+It stores nothing. Tokens are HMAC-signed, counters live in memory, and the machine stops when idle (`auto_stop_machines`). Secrets: `SPARKBOX_TOKEN_SECRET`, `SPARKBOX_INVITE_CODES`, `SPARKBOX_OPENROUTER_KEY`. Deploy with `fly deploy --remote-only --ha=false`. Static-only hosting (no server) still works; the app then has no free agent and no relay, and the preview origin must be set in Settings.
+
+Locally, `npm run dev:server` runs the same process on port 4330 behind Vite's proxy; see `scripts/host-smoke.ts` for the end-to-end check.
+
 ## Run it
 
 ```sh
@@ -48,7 +62,7 @@ Create a project, add a key in the Agent panel's Connection settings, and ask fo
 
 ## Limits
 
-- **No outbound network from the sandbox** unless a WISP relay URL is set in Settings. `npm install` and `curl` fail without one. The starter template needs no install step, and the agent is told to build apps that load libraries from a CDN in the preview instead. The preview page itself does reach the internet: the Wasmer service worker is patched at build time so cross-origin requests bypass the sandbox and guest responses use `Cross-Origin-Embedder-Policy: credentialless` (see `vite.config.ts`). Safari lacks `credentialless`, so the agent is told to add `crossorigin` attributes to CDN tags.
+- **Outbound network from the sandbox** goes through the host's WISP relay when the browser holds an invite token, or a relay URL set in Settings. Without either, `npm install` and `curl` fail. The starter template needs no install step, and the agent is told to build apps that load libraries from a CDN in the preview instead. The preview page itself does reach the internet: the Wasmer service worker is patched at build time so cross-origin requests bypass the sandbox and guest responses use `Cross-Origin-Embedder-Policy: credentialless` (see `vite.config.ts`). Safari lacks `credentialless`, so the agent is told to add `crossorigin` attributes to CDN tags.
 - **Shell tools:** bash, coreutils, grep, sed, ripgrep, Node.js, npm and pnpm. No git, curl or python. If the runtime's worker pool dies, the sandbox rebuilds itself from the files in memory and the next command retries; the preview must be started again afterwards.
 - **Page errors reach the agent.** The preview's static server injects a small reporter into HTML pages; runtime errors show in the Preview panel and are included in the agent's next prompt.
 - **Anthropic and OpenRouter have been run live; OpenAI has not.** `npm run test:live:anthropic` and `npm run test:live:openrouter` (with `SPARKBOX_ANTHROPIC_KEY` / `SPARKBOX_OPENROUTER_KEY` set) each make one paid turn through the UI. The OpenAI adapter typechecks against the official SDK but has not been run against a live account yet.

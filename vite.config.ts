@@ -89,7 +89,19 @@ function previewHost(): Plugin {
 
 export default defineConfig({
   plugins: [react(), tailwindcss(), previewHost()],
-  server: { port: 4320, strictPort: true, headers: isolation, allowedHosts: [".ts.net"] },
+  server: {
+    port: 4320,
+    strictPort: true,
+    headers: isolation,
+    allowedHosts: [".ts.net"],
+    // The host process (npm run dev:server) provides config, invites, the
+    // free-agent proxy and the WISP relay during development.
+    proxy: {
+      "/api": { target: "http://127.0.0.1:4330", ws: true },
+      "/config.json": { target: "http://127.0.0.1:4330" },
+      "/wisp": { target: "ws://127.0.0.1:4330", ws: true },
+    },
+  },
   preview: { port: 4321, strictPort: true, headers: isolation, allowedHosts: [".ts.net"] },
   optimizeDeps: { exclude: ["@wasmer/sdk"] },
   worker: { format: "es" },

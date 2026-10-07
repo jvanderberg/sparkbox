@@ -4,6 +4,7 @@ import type { PreviewController } from "./agent/preview-controller.ts";
 import { AgentRunner } from "./agent/runner.ts";
 import { settings } from "./agent/settings.ts";
 import { Field, Modal } from "./components.tsx";
+import { type HostConfig, hostConfig } from "./config.ts";
 import { Loading } from "./Loading.tsx";
 import { defaultPreviewOrigin, previewPort, usePreview } from "./Preview.tsx";
 import { queryPreview } from "./preview-bridge.ts";
@@ -113,7 +114,7 @@ export function App() {
           <input
             value={wisp}
             onChange={(event) => setWisp(event.target.value)}
-            placeholder="wss://relay.example.com/"
+            placeholder="wss://relay.example.com/ (must end with a slash)"
           />
         </Field>
         <p className="muted">
@@ -238,7 +239,11 @@ function ProjectSession({
   const [runner, setRunner] = useState<AgentRunner | null>(null);
   const [progress, setProgress] = useState<SandboxProgress>({ phase: "runtime" });
   const [error, setError] = useState("");
-  const origin = settings.previewOrigin() || defaultPreviewOrigin();
+  const [host, setHost] = useState<HostConfig | null>(null);
+  useEffect(() => {
+    void hostConfig().then(setHost);
+  }, []);
+  const origin = settings.previewOrigin() || host?.previewOrigin || defaultPreviewOrigin();
   const preview = usePreview(sandbox, origin);
   const previewRef = useRef(preview);
   previewRef.current = preview;
@@ -250,21 +255,30 @@ function ProjectSession({
   }));
   useEffect(() => {
     // Exposed for browser checks; it is the same object the agent uses.
-    (window as unknown as { sparkboxPreviewTool?: unknown }).sparkboxPreviewTool = (
-      request: Parameters<PreviewController["query"]>[0],
-    ) => controller.query(request);
+    const globals = window as unknown as { sparkboxPreviewTool?: unknown; sparkboxExec?: unknown };
+    globals.sparkboxPreviewTool = (request: Parameters<PreviewController["query"]>[0]) =>
+      controller.query(request);
+    globals.sparkboxExec = (command: string) => sandbox?.exec(command, { timeoutMs: 180_000 });
     return () => {
-      (window as unknown as { sparkboxPreviewTool?: unknown }).sparkboxPreviewTool = undefined;
+      globals.sparkboxPreviewTool = undefined;
+      globals.sparkboxExec = undefined;
     };
-  }, [controller]);
+  }, [controller, sandbox]);
 
   useEffect(() => {
+    if (!host) return;
     let active = true;
     let created: WasmerSandbox | null = null;
+    // Outbound network: a relay the user configured, or the host's relay
+    // when this browser holds an invite token.
+    const token = settings.key("sparkbox");
+    const wispUrl =
+      settings.wispUrl() ||
+      (host.wispUrl && token ? `${host.wispUrl}${encodeURIComponent(token)}/` : "");
     void WasmerSandbox.create({
       workspace: project.id,
       template: starterTemplate(project.name),
-      wispUrl: settings.wispUrl() || undefined,
+      wispUrl: wispUrl || undefined,
       onProgress: (value) => {
         if (active) setProgress(value);
       },
@@ -277,7 +291,7 @@ function ProjectSession({
           new AgentRunner({
             workspace: project.id,
             sandbox: instance,
-            networkEnabled: () => Boolean(settings.wispUrl()),
+            networkEnabled: () => Boolean(wispUrl),
             previewPort,
             previewErrors: () => controller.recentErrors(),
             preview: controller,
@@ -299,7 +313,7 @@ function ProjectSession({
       document.removeEventListener("visibilitychange", hidden);
       void created?.close();
     };
-  }, [project.id, project.name, controller]);
+  }, [project.id, project.name, controller, host]);
 
   if (!sandbox || !runner)
     return <Loading title={project.name} progress={progress} error={error} onBack={onClose} />;

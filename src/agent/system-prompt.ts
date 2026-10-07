@@ -22,6 +22,8 @@ export function systemPrompt(options: {
         "Tools: the shell tool runs commands; apply_patch creates, updates and deletes files. Paths are relative to /workspace.",
       openrouter:
         "Tools: run_command runs commands; read_file, write_file and edit_file work on files; list_files shows the project.",
+      sparkbox:
+        "Tools: run_command runs commands; read_file, write_file and edit_file work on files; list_files shows the project.",
     }[options.provider]
   }
 - download: fetches a URL with the user's browser and saves it into the project (default data/<filename>). It works when the server allows cross-origin reads, which most open-data portals, GitHub raw files, npm and CDNs do; when it fails with a CORS error, ask the user to upload the file through Files instead.

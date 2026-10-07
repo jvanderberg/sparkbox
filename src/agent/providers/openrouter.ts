@@ -10,7 +10,13 @@ import {
   runPageTool,
   type ToolOutcome,
 } from "../tools.ts";
-import { describeFailure, type Prompt, type ProviderSession, type TurnContext } from "./types.ts";
+import {
+  describeFailure,
+  type Prompt,
+  type ProviderId,
+  type ProviderSession,
+  type TurnContext,
+} from "./types.ts";
 
 const tools: ChatCompletionTool[] = [...genericTools, ...pageTools].map((tool) => ({
   type: "function",
@@ -19,16 +25,22 @@ const tools: ChatCompletionTool[] = [...genericTools, ...pageTools].map((tool) =
 
 /** Any OpenRouter model through its OpenAI-compatible chat API with function tools. */
 export class OpenRouterSession implements ProviderSession {
-  readonly provider = "openrouter" as const;
+  readonly provider: ProviderId;
   private client: OpenAI;
   private messages: ChatCompletionMessageParam[] = [];
+  /**
+   * `baseURL` defaults to OpenRouter. The Sparkbox free agent points it at
+   * the host's proxy, which holds the real key and fixes the model.
+   */
   constructor(
     apiKey: string,
     readonly model: string,
+    options: { baseURL?: string; provider?: ProviderId } = {},
   ) {
+    this.provider = options.provider ?? "openrouter";
     this.client = new OpenAI({
       apiKey,
-      baseURL: "https://openrouter.ai/api/v1",
+      baseURL: options.baseURL ?? "https://openrouter.ai/api/v1",
       dangerouslyAllowBrowser: true,
       maxRetries: 2,
       defaultHeaders: { "HTTP-Referer": location.origin, "X-Title": "Sparkbox" },
