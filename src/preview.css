@@ -111,3 +111,8 @@
 .preview-panel {
   position: relative;
 }
+/* Leave room for the floating exit control. */
+.workspace-screen.preview-full .preview-page-errors,
+.workspace-screen.preview-full .preview-error {
+  padding-right: 200px;
+}
