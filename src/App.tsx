@@ -97,11 +97,18 @@ export function App() {
         }
       })
       .catch((error: Error) => setNotice(error.message));
-    // A same-tab GitHub sign-in lands back here with a code to exchange.
+    // GitHub sends the user back here with a code to exchange: in the popup
+    // (which stores the token for the opening tab and closes) or in this tab.
     void completeGitHubLogin()
-      .then(async (token) => {
-        if (!token) return;
-        const login = await githubAccount.connect(token);
+      .then(async (result) => {
+        if (!result) return;
+        const login = await githubAccount.connect(result.token);
+        if (result.popup) {
+          window.close();
+          // Still here: the browser would not close the window for us.
+          setNotice(`GitHub is connected as ${login}. You can close this window.`);
+          return;
+        }
         setNotice(`GitHub is connected as ${login}.`);
         const id = new URLSearchParams(location.hash.slice(1)).get("project");
         const project = loadProjects().find((entry) => entry.id === id);

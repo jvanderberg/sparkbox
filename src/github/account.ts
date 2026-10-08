@@ -22,6 +22,12 @@ function notify() {
   for (const listener of listeners) listener();
 }
 
+// A sign-in completed in the popup, or a sign-out in another tab, shows up here.
+if (typeof window !== "undefined")
+  window.addEventListener("storage", (event) => {
+    if (event.key === null || event.key.startsWith("sparkbox:github-")) notify();
+  });
+
 export const githubAccount = {
   get(): GitHubAccount {
     return current;
