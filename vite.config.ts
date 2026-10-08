@@ -271,10 +271,15 @@ function wasmerRuntime(): Plugin {
   };
 }
 
+// SPARKBOX_DEV_PORT and SPARKBOX_HOST_PORT let a second checkout run its own
+// dev server and host process beside the defaults (4320 and 4330).
+const devPort = Number(process.env.SPARKBOX_DEV_PORT ?? 4320);
+const hostTarget = `127.0.0.1:${process.env.SPARKBOX_HOST_PORT ?? 4330}`;
+
 export default defineConfig({
   plugins: [react(), tailwindcss(), previewHost(), wasmerWorkerPatch(), wasmerRuntime()],
   server: {
-    port: 4320,
+    port: devPort,
     strictPort: true,
     headers: isolation,
     allowedHosts: [".ts.net"],
@@ -284,9 +289,9 @@ export default defineConfig({
     // The host process (npm run dev:server) provides config, invites, the
     // free-agent proxy and the WISP relay during development.
     proxy: {
-      "/api": { target: "http://127.0.0.1:4330", ws: true },
-      "/config.json": { target: "http://127.0.0.1:4330" },
-      "/wisp": { target: "ws://127.0.0.1:4330", ws: true },
+      "/api": { target: `http://${hostTarget}`, ws: true },
+      "/config.json": { target: `http://${hostTarget}` },
+      "/wisp": { target: `ws://${hostTarget}`, ws: true },
     },
   },
   preview: { port: 4321, strictPort: true, headers: isolation, allowedHosts: [".ts.net"] },

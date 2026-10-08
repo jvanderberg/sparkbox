@@ -19,7 +19,7 @@
     "test:live:anthropic": "tsx scripts/live-turn.ts anthropic",
     "test:live:openai": "tsx scripts/live-turn.ts openai",
     "test:live:openrouter": "tsx scripts/live-turn.ts openrouter",
-    "dev:server": "PORT=4330 SPARKBOX_PREVIEW_PORT=4331 SPARKBOX_PUBLIC_ORIGIN=http://127.0.0.1:4320 SPARKBOX_PREVIEW_ORIGIN=http://localhost:4320 node --experimental-strip-types server/main.ts",
+    "dev:server": "PORT=4330 SPARKBOX_PREVIEW_PORT=4331 SPARKBOX_PUBLIC_ORIGIN=http://127.0.0.1:4320 SPARKBOX_PREVIEW_ORIGIN=http://localhost:4320 SPARKBOX_RELAY_ORIGINS=http://localhost:4320 node --experimental-strip-types server/main.ts",
     "start": "node --experimental-strip-types server/main.ts",
     "test:ws": "tsx scripts/ws-smoke.ts",
     "test:vite": "tsx scripts/vite-smoke.ts"

@@ -64,11 +64,31 @@ console.log(
   (fetched.stdout + fetched.stderr).trim().slice(0, 200),
 );
 if (!/is-number \d/.test(fetched.stdout)) throw new Error("relay fetch failed");
-const blocked = await run(
+// Any public host is reachable; private addresses are not.
+const open = await run(
   "node -e \"fetch('https://example.com/').then(r=>console.log('status', r.status)).catch(e=>console.log('blocked:', e.message))\"",
 );
-console.log("blocked host:", (blocked.stdout + blocked.stderr).trim().slice(0, 200));
-if (/status 200/.test(blocked.stdout)) throw new Error("allowlist did not block example.com");
+console.log("public host:", (open.stdout + open.stderr).trim().slice(0, 200));
+if (!/status 200/.test(open.stdout)) throw new Error("relay did not reach example.com");
+const blocked = await run(
+  "node -e \"fetch('http://10.0.0.1/').then(r=>console.log('status', r.status)).catch(e=>console.log('blocked:', e.message))\"",
+);
+console.log("private host:", (blocked.stdout + blocked.stderr).trim().slice(0, 200));
+if (/status \d/.test(blocked.stdout)) throw new Error("relay reached a private address");
+// The invite token itself does not open the relay; only a ticket does.
+const inviteSocket = await page.evaluate(
+  () =>
+    new Promise<string>((resolve) => {
+      const token = localStorage.getItem("sparkbox:key:sparkbox") ?? "";
+      const ws = new WebSocket(`${location.origin.replace(/^http/, "ws")}/wisp/${token}/`);
+      ws.onopen = () => resolve("open");
+      ws.onerror = () => resolve("error");
+      ws.onclose = () => resolve("closed");
+      setTimeout(() => resolve("timeout"), 10_000);
+    }),
+);
+console.log("relay with the invite token:", inviteSocket);
+if (inviteSocket === "open") throw new Error("relay accepted the invite token as a ticket");
 const installed = await run(
   "pnpm add is-number@7.0.0 --ignore-scripts 2>&1 | tail -3 && node -e \"console.log('require ok', require('is-number')(5))\"",
 );

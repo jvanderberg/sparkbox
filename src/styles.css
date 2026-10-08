@@ -1866,6 +1866,8 @@ h2 {
   position: relative;
 }
 .workspace-header {
+  /* The preview's Server and Logs popovers hang from this bar. */
+  position: relative;
   display: flex;
   align-items: center;
   gap: 18px;

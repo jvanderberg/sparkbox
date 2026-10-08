@@ -5,7 +5,7 @@ import { AgentRunner } from "./agent/runner.ts";
 import { isSecretName } from "./agent/secrets.ts";
 import { settings } from "./agent/settings.ts";
 import { Field, Modal } from "./components.tsx";
-import { type HostConfig, hostConfig } from "./config.ts";
+import { type HostConfig, hostConfig, relayUrl } from "./config.ts";
 import { Loading } from "./Loading.tsx";
 import { defaultPreviewOrigin, previewPort, usePreview } from "./Preview.tsx";
 import { queryPreview } from "./preview-bridge.ts";
@@ -385,15 +385,18 @@ function ProjectSession({
       sparkboxPreviewTool?: unknown;
       sparkboxExec?: unknown;
       sparkboxWrite?: unknown;
+      sparkboxSandbox?: unknown;
     };
     globals.sparkboxPreviewTool = (request: Parameters<PreviewController["query"]>[0]) =>
       controller.query(request);
     globals.sparkboxExec = (command: string) => sandbox?.exec(command, { timeoutMs: 180_000 });
     globals.sparkboxWrite = (path: string, content: string) => sandbox?.writeFile(path, content);
+    globals.sparkboxSandbox = sandbox;
     return () => {
       globals.sparkboxPreviewTool = undefined;
       globals.sparkboxExec = undefined;
       globals.sparkboxWrite = undefined;
+      globals.sparkboxSandbox = undefined;
     };
   }, [controller, sandbox]);
 
@@ -402,19 +405,29 @@ function ProjectSession({
     let active = true;
     let created: WasmerSandbox | null = null;
     // Outbound network: a relay the user configured, or the host's relay
-    // when this browser holds an invite token.
+    // through a short-lived ticket when this browser holds an invite token.
     const token = settings.key("sparkbox");
-    const wispUrl =
-      settings.wispUrl() ||
-      (host.wispUrl && token ? `${host.wispUrl}${encodeURIComponent(token)}/` : "");
-    void WasmerSandbox.create({
-      workspace: project.id,
-      template: starterTemplate(project.name),
-      wispUrl: wispUrl || undefined,
-      onProgress: (value) => {
-        if (active) setProgress(value);
-      },
-    })
+    const relay = settings.wispUrl()
+      ? Promise.resolve(settings.wispUrl())
+      : host.wispUrl && token
+        ? relayUrl(token).catch((cause: Error) => {
+            console.warn(`Network relay unavailable: ${cause.message}`);
+            return "";
+          })
+        : Promise.resolve("");
+    let wispUrl = "";
+    relay
+      .then((url) => {
+        wispUrl = url;
+        return WasmerSandbox.create({
+          workspace: project.id,
+          template: starterTemplate(project.name),
+          wispUrl: wispUrl || undefined,
+          onProgress: (value) => {
+            if (active) setProgress(value);
+          },
+        });
+      })
       .then((instance) => {
         if (!active) return void instance.close({ persist: false });
         created = instance;
@@ -439,7 +452,9 @@ function ProjectSession({
       .catch((cause: Error) => {
         if (active) setError(cause.message);
       });
-    const persist = () => void created?.persist();
+    // Nothing asynchronous runs once the page is hidden or unloading, so
+    // the save is issued synchronously from the page's copy of the files.
+    const persist = () => created?.persistNow();
     const hidden = () => {
       if (document.visibilityState === "hidden") persist();
     };
