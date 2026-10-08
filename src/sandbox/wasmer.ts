@@ -13,6 +13,9 @@ import {
   type Sandbox,
 } from "./types.ts";
 
+/** Prefix of stdout lines that carry requests from guest tools to the page. */
+export const rpcMarker = "@@sparkbox-rpc@@";
+
 export const sandboxPackages = [
   "wasmer/bash",
   "wasmer/edgejs@0.2.5",
@@ -265,11 +268,15 @@ export class WasmerSandbox implements Sandbox {
     this.changed();
   }
   async exists(path: string) {
+    return (await this.stat(path)) !== null;
+  }
+  /** File kind and size, or null when nothing is at `path`. */
+  async stat(path: string): Promise<{ kind: "file" | "directory"; size: number } | null> {
     try {
-      await this.recover(() => this.handle.fs.stat(this.absolute(path)));
-      return true;
+      const result = await this.recover(() => this.handle.fs.stat(this.absolute(path)));
+      return { kind: result.kind, size: result.size };
     } catch {
-      return false;
+      return null;
     }
   }
   async mkdir(path: string) {
@@ -333,29 +340,63 @@ export class WasmerSandbox implements Sandbox {
   }
 
   /** Start a long-running command (a dev server) and keep it until stopped. */
+  /**
+   * Start a long-running command with stdin open. Stdout lines that carry
+   * the RPC marker go to `onRpc` (without the marker); everything else is
+   * output. The page answers RPC requests by writing lines to stdin.
+   */
   async start(
     command: string,
     onOutput: (chunk: string) => void,
-  ): Promise<{ process: Process; done: Promise<number> }> {
+    onRpc?: (line: string) => void,
+  ): Promise<{ process: Process; done: Promise<number>; write: (line: string) => Promise<void> }> {
     const process = await this.recover(() =>
       this.handle
         .shell(command, { cwd: this.root })
-        .spawn({ stdin: "closed", stdout: "pipe", stderr: "pipe" }),
+        .spawn({ stdin: "pipe", stdout: "pipe", stderr: "pipe" }),
     );
     this.processes.add(process);
-    const pump = async (stream: typeof process.stdout) => {
-      if (!stream) return;
+    const pumpStderr = async () => {
+      if (!process.stderr) return;
       const decode = new TextDecoder();
-      for await (const chunk of stream) onOutput(decode.decode(chunk, { stream: true }));
+      for await (const chunk of process.stderr) onOutput(decode.decode(chunk, { stream: true }));
     };
-    void pump(process.stdout);
-    void pump(process.stderr);
+    const pumpStdout = async () => {
+      if (!process.stdout) return;
+      const decode = new TextDecoder();
+      let buffer = "";
+      for await (const chunk of process.stdout) {
+        buffer += decode.decode(chunk, { stream: true });
+        let newline = buffer.indexOf("\n");
+        while (newline >= 0) {
+          const line = buffer.slice(0, newline);
+          buffer = buffer.slice(newline + 1);
+          if (line.startsWith(rpcMarker)) onRpc?.(line.slice(rpcMarker.length));
+          else onOutput(`${line}\n`);
+          newline = buffer.indexOf("\n");
+        }
+        // Partial lines stream through unless they could be the start of an RPC line.
+        if (buffer && !rpcMarker.startsWith(buffer) && !buffer.startsWith(rpcMarker)) {
+          onOutput(buffer);
+          buffer = "";
+        }
+      }
+      if (buffer && !buffer.startsWith(rpcMarker)) onOutput(buffer);
+    };
+    void pumpStdout();
+    void pumpStderr();
     const done = process.wait().then((output) => {
       this.processes.delete(process);
       this.changed();
       return output.exitCode;
     });
-    return { process, done };
+    return {
+      process,
+      done,
+      write: async (line: string) => {
+        await process.stdin?.write(`${line}\n`);
+      },
+    };
   }
 
   /**

@@ -10,6 +10,7 @@ import {
   Square,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { EsbuildService } from "./preview/esbuild-service.ts";
 import {
   defaultPreviewConfig,
   defaultPreviewPort,
@@ -17,6 +18,9 @@ import {
   readPreviewConfig,
   writePreviewConfig,
 } from "./preview-config.ts";
+import esbuildShim from "./sandbox/guest/esbuild-shim.js?raw";
+import rollupParseAst from "./sandbox/guest/rollup-parse-ast.js?raw";
+import viteLauncher from "./sandbox/guest/vite-launcher.mjs?raw";
 import { serveScript } from "./sandbox/serve-script.ts";
 import type { WasmerSandbox } from "./sandbox/wasmer.ts";
 import { wsBridgeScript } from "./sandbox/ws-bridge-script.ts";
@@ -61,12 +65,32 @@ export function usePreview(sandbox: WasmerSandbox | null, origin: string) {
   const pageIds = useRef(new Map<Window, Map<number, number>>());
   const nextRoute = useRef(1);
 
+  // A dev server that restarts itself (Vite after a config change) closes
+  // its listener and binds the port again; the exposure then has to be
+  // recreated and the frame reloaded from the new listener.
+  const relisten = useRef(false);
+  const [frameVersion, setFrameVersion] = useState(0);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: expose only reads refs and the stable origin
   useEffect(() => {
     if (!sandbox) return;
     void readPreviewConfig(sandbox).then(setConfig);
     return sandbox.onListen(
-      (port) => setPorts((known) => (known.includes(port) ? known : [...known, port])),
-      (port) => setPorts((known) => known.filter((entry) => entry !== port)),
+      (port) => {
+        setPorts((known) => (known.includes(port) ? known : [...known, port]));
+        if (port !== configRef.current.port || !relisten.current || !process.current) return;
+        relisten.current = false;
+        void (async () => {
+          await closeServer.current?.().catch(() => {});
+          closeServer.current = null;
+          await expose(port).catch(() => {});
+          setFrameVersion((version) => version + 1);
+        })();
+      },
+      (port) => {
+        setPorts((known) => known.filter((entry) => entry !== port));
+        if (port === configRef.current.port && process.current && urlRef.current)
+          relisten.current = true;
+      },
     );
   }, [sandbox]);
 
@@ -250,6 +274,9 @@ export function usePreview(sandbox: WasmerSandbox | null, origin: string) {
         configRef.current = current;
         await sandbox.writeFile(".sparkbox/serve.mjs", serveScript);
         await sandbox.writeFile(".sparkbox/ws-bridge.mjs", wsBridgeScript);
+        await sandbox.writeFile(".sparkbox/esbuild-shim.js", esbuildShim);
+        await sandbox.writeFile(".sparkbox/rollup-parse-ast.js", rollupParseAst);
+        await sandbox.writeFile(".sparkbox/vite.mjs", viteLauncher);
         let host = "";
         try {
           host = new URL(origin).hostname;
@@ -258,17 +285,24 @@ export function usePreview(sandbox: WasmerSandbox | null, origin: string) {
         }
         // Vite (6.0.9+) accepts the preview hostname through this variable; the
         // rest is the project's own command.
-        const env = host ? `__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS=${host} ` : "";
-        const started = await sandbox.start(`${env}${current.command}`, (chunk) =>
-          setLogs((text) => {
-            const next = (text + chunk).slice(-20_000);
-            logsRef.current = next;
-            return next;
-          }),
+        const env = `SPARKBOX=1 ${host ? `__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS=${host} ` : ""}`;
+        // Guest tools (Vite's esbuild replacement) call into the page over stdio.
+        let service: EsbuildService | null = null;
+        const started = await sandbox.start(
+          `${env}${current.command}`,
+          (chunk) =>
+            setLogs((text) => {
+              const next = (text + chunk).slice(-20_000);
+              logsRef.current = next;
+              return next;
+            }),
+          (line) => service?.handleLine(line),
         );
+        service = new EsbuildService(sandbox, started.write);
         process.current = started.process;
         setRunning(true);
         void started.done.then((code) => {
+          void service?.dispose();
           if (process.current === started.process) {
             process.current = null;
             setRunning(false);
@@ -349,6 +383,7 @@ export function usePreview(sandbox: WasmerSandbox | null, origin: string) {
     pageErrors,
     /** Stable accessors for the agent's tools. */
     recentPageErrors: () => pageErrorsRef.current,
+    frameVersion,
     recentLogs: () => logsRef.current,
     currentConfig: () => configRef.current,
     clearPageErrors: () => setPageErrors([]),
@@ -564,6 +599,7 @@ export function PreviewPanel({
       )}
       {preview.url ? (
         <iframe
+          key={preview.frameVersion}
           ref={preview.setFrame}
           className="preview-frame"
           title="App preview"

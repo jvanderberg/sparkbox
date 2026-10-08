@@ -21,6 +21,9 @@ Status as of 2026-10-05. Prototype only.
 
 - [x] Hosted on Fly (2026-10-07): `server/main.ts` serves the app and the preview host (port 8443 as the second origin), publishes `/config.json`, mints invite tokens, proxies the free "Sparkbox" provider to OpenRouter with a server key and daily limits, and relays WISP with a TLS-server-name allowlist. Verified locally end to end (`scripts/host-smoke.ts`): invite, proxied model turn, registry fetch and `pnpm add` through the relay, blocked host refused.
 
+- [x] Same-origin WebSockets from preview pages (2026-10-07): the injected bridge shim posts socket operations to the Sparkbox tab, which relays them to a bridge process in the sandbox holding real sockets. Verified by `scripts/ws-smoke.ts` locally and on Fly.
+- [x] Vite 7 dev server inside the sandbox (2026-10-07): Edge.js cannot execute WebAssembly or native binaries, so `.sparkbox/vite.mjs` rewrites the installed Vite to use an esbuild client that forwards calls over stdio to esbuild-wasm in the page (plugin hooks are called back in the sandbox, files go through the sandbox filesystem), acorn for Rollup's parser and the asm.js import lexer. Verified by `scripts/vite-smoke.ts`: config bundling, TypeScript entry, CSS hot update without reload.
+
 ## Not done
 
 - [x] Anthropic adapter verified live on 2026-10-05 with Opus 5.5 (`npm run test:live:anthropic`): bash and text-editor tools, streamed reply, preview, changes and transcript restore after reload. Fixed a doubled-delta bug from a StrictMode double subscription.
@@ -32,7 +35,9 @@ Status as of 2026-10-05. Prototype only.
 - [ ] Lite mode for phones: esbuild-wasm build and preview without the Wasmer sandbox.
 - [x] Production smokes pass against https://sparkbox.fly.dev (2026-10-07): browser smoke on desktop and phone with the :8443 preview host, and host smoke (invite, proxied free-agent turn, registry fetch and pnpm add through the relay, blocked host refused). A Vite plugin now emits the SDK's worker and wasm with their layout intact; without it every sandbox process died in the production bundle.
 - [ ] Remove the leftover Civic Spark portal CSS from `src/styles.css` and the unused `claude`/`opencode` provider names in `src/agents/protocol.ts`.
-- [ ] Preview for projects that run their own dev server (expose any listening port; partly there through "Show port N").
+- [ ] Vite 8 (Rolldown) in the sandbox: needs the two-way plugin callbacks bridged to Rolldown's browser build; Vite 7 is pinned until then.
+- [ ] Tailwind v4 in the sandbox: its core is JavaScript but Lightning CSS and the Oxide scanner are native; run them in the page through the same channel.
+- [ ] React Fast Refresh verified inside the sandbox (plugin-react runs Babel in Edge.js; untested).
 - [ ] Reproduce the "Scheduler is dead" crash deliberately to confirm the automatic rebuild path end to end; today it is covered by code review and the recovery wrapper only.
 - [ ] Explain blocked network requests in the preview (which host, why) instead of a generic module error.
 - [ ] Questions from the agent to the user (the timeline supports approval events; no provider wiring yet).

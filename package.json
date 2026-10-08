@@ -19,9 +19,10 @@
     "test:live:anthropic": "tsx scripts/live-turn.ts anthropic",
     "test:live:openai": "tsx scripts/live-turn.ts openai",
     "test:live:openrouter": "tsx scripts/live-turn.ts openrouter",
-    "dev:server": "node --experimental-strip-types server/main.ts",
+    "dev:server": "PORT=4330 SPARKBOX_PREVIEW_PORT=4331 SPARKBOX_PUBLIC_ORIGIN=http://127.0.0.1:4320 SPARKBOX_PREVIEW_ORIGIN=http://localhost:4320 node --experimental-strip-types server/main.ts",
     "start": "node --experimental-strip-types server/main.ts",
-    "test:ws": "tsx scripts/ws-smoke.ts"
+    "test:ws": "tsx scripts/ws-smoke.ts",
+    "test:vite": "tsx scripts/vite-smoke.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.131.0",
@@ -30,6 +31,7 @@
     "@wasmer/sdk": "^0.19.0",
     "class-variance-authority": "^0.7.1",
     "diff": "^9.0.0",
+    "esbuild-wasm": "^0.28.2",
     "hast-util-to-jsx-runtime": "^2.3.6",
     "lucide-react": "^0.577.0",
     "monaco-editor": "0.56.0",
@@ -38,6 +40,7 @@
     "react-dom": "^19.3.0",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
+    "resolve.exports": "^2.0.3",
     "tailwind-merge": "^3.5.0",
     "ws": "^8.22.0",
     "zod": "^4.6.5"

@@ -40,7 +40,7 @@ The deployed site is https://sparkbox.fly.dev. One small Fly machine runs `serve
 
 It stores nothing. Tokens are HMAC-signed, counters live in memory, and the machine stops when idle (`auto_stop_machines`). Secrets: `SPARKBOX_TOKEN_SECRET`, `SPARKBOX_INVITE_CODES`, `SPARKBOX_OPENROUTER_KEY`. Deploy with `fly deploy --remote-only --ha=false`. Static-only hosting (no server) still works; the app then has no free agent and no relay, and the preview origin must be set in Settings.
 
-Locally, `npm run dev:server` runs the same process on port 4330 behind Vite's proxy; see `scripts/host-smoke.ts` for the end-to-end check.
+Locally, `npm run dev:server` runs the same process on port 4330 behind Vite's proxy with the relay URL pointing back at the dev server (set `SPARKBOX_TOKEN_SECRET`, `SPARKBOX_INVITE_CODES` and optionally `SPARKBOX_OPENROUTER_KEY` in the environment); see `scripts/host-smoke.ts` for the end-to-end check. Invites are limited to 30 per address per day, so repeated browser checks eventually need a restart of the host process.
 
 ## Run it
 
@@ -58,13 +58,14 @@ Create a project, add a key in the Agent panel's Connection settings, and ask fo
 - Sandbox boot with persistent project files across reloads (IndexedDB snapshot of `/workspace`).
 - Agent turns against Anthropic, OpenAI and OpenRouter with streaming text, live tool rows, message queueing and Stop.
 - Files, editor with save conflict detection, upload/download, Changes against a saved version, and Preview with an iframe, logs, Reload, Restart and a Server form.
-- Preview runs the command in the project's `sparkbox.json` (command, port, directory); without one it is a static server with live reload. Same-origin WebSockets from preview pages are tunnelled through a bridge process in the sandbox, so Vite's HMR works. Backends run on one port; SQLite through sql.js.
+- Preview runs the command in the project's `sparkbox.json` (command, port, directory); without one it is a static server with live reload. Same-origin WebSockets from preview pages are tunnelled through a bridge process in the sandbox (`scripts/ws-smoke.ts`). Backends run on one port; SQLite through sql.js.
+- Real Vite 7 inside the sandbox (`scripts/vite-smoke.ts`). The sandbox runtime cannot run esbuild, Rollup's parser or WebAssembly, so `.sparkbox/vite.mjs` patches the installed Vite once to load replacements: esbuild calls are forwarded over the process's stdio to esbuild-wasm running in the page (`src/preview/esbuild-service.ts`), which reads and writes project files through the sandbox filesystem and calls plugin hooks back in the sandbox; Rollup's parser becomes acorn and the import lexer its asm.js build. Vite 8 (Rolldown) is not supported yet.
 - Phone layout with the Civic Spark mobile rules.
 
 ## Limits
 
 - **Outbound network from the sandbox** goes through the host's WISP relay when the browser holds an invite token, or a relay URL set in Settings. Without either, `npm install` and `curl` fail. The starter template needs no install step, and the agent is told to build apps that load libraries from a CDN in the preview instead. The preview page itself does reach the internet: the Wasmer service worker is patched at build time so cross-origin requests bypass the sandbox and guest responses use `Cross-Origin-Embedder-Policy: credentialless` (see `vite.config.ts`). Safari lacks `credentialless`, so the agent is told to add `crossorigin` attributes to CDN tags.
-- **Shell tools:** bash, coreutils, grep, sed, ripgrep, Node.js, npm and pnpm. No git, curl or python. If the runtime's worker pool dies, the sandbox rebuilds itself from the files in memory and the next command retries; the preview must be started again afterwards.
+- **Shell tools:** bash, coreutils, grep, sed, ripgrep, Node.js, npm and pnpm. No git, curl or python. Output that Node writes into a shell pipe is lost in this runtime (`node x.js | head` prints nothing); redirect to a file instead. If the runtime's worker pool dies, the sandbox rebuilds itself from the files in memory and the next command retries; the preview must be started again afterwards.
 - **Page errors reach the agent.** The preview's static server injects a small reporter into HTML pages; runtime errors show in the Preview panel and are included in the agent's next prompt.
 - **Anthropic and OpenRouter have been run live; OpenAI has not.** `npm run test:live:anthropic` and `npm run test:live:openrouter` (with `SPARKBOX_ANTHROPIC_KEY` / `SPARKBOX_OPENROUTER_KEY` set) each make one paid turn through the UI. The OpenAI adapter typechecks against the official SDK but has not been run against a live account yet.
 - **Preview needs a second origin.** Locally that is `localhost` vs `127.0.0.1`. A static deployment needs two hostnames serving the same build, set in Settings → Preview origin. GitHub Pages project sites share one origin, so use Cloudflare Pages or similar with two custom domains, or a separate host for the preview files (`wasmer-service-worker.js` and `.wasmer/`).
