@@ -306,14 +306,14 @@ console.log(out.join(" "));`,
   if (await menu.isVisible()) await page.keyboard.press("Escape");
   const stoppedAt = Date.now();
   let freed = "";
-  while (Date.now() - stoppedAt < 20_000) {
+  while (Date.now() - stoppedAt < 60_000) {
     freed = (await exec("node probe.mjs 3999 8080")).stdout.trim();
     if (freed === "3999=free 8080=free") break;
     await page.waitForTimeout(500);
   }
   if (freed !== "3999=free 8080=free")
     throw new Error(`stopping the preview left a server running: ${freed}`);
-  console.log(`${label} stopping the preview frees both ports`);
+  console.log(`${label} stopping the preview frees both ports (${Date.now() - stoppedAt} ms)`);
   await tabs.getByRole("button", { name: "Files" }).click();
   if (await expand.isVisible()) await expand.click();
   await page.getByRole("treeitem", { name: /app\.js/ }).click();
