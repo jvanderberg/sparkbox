@@ -13,6 +13,19 @@ import {
   type Sandbox,
 } from "./types.ts";
 
+/** Paths (workspace-relative) reported by `onFilesChanged`. */
+export type FileChanges = { added?: string[]; changed?: string[]; removed?: string[] };
+
+/** FNV-1a over the bytes plus the length: cheap and good enough to notice an edit. */
+function digest(bytes: Uint8Array) {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < bytes.length; index++) {
+    hash ^= bytes[index] as number;
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return `${hash.toString(16)}:${bytes.length}`;
+}
+
 /** Prefix of stdout lines that carry requests from guest tools to the page. */
 export const rpcMarker = "@@sparkbox-rpc@@";
 
@@ -60,6 +73,10 @@ type Boot = { client: WasmerClient; handle: WasmerSandboxHandle };
 export class WasmerSandbox implements Sandbox {
   readonly root = "/workspace";
   private listeners = new Set<() => void>();
+  private fileListeners = new Set<(event: FileChanges) => void>();
+  /** Content digest per workspace path, the baseline for change detection. */
+  private digests = new Map<string, string>();
+  private digestsSeeded = false;
   private restartListeners = new Set<() => void>();
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
   private saving: Promise<void> | null = null;
@@ -237,6 +254,7 @@ export class WasmerSandbox implements Sandbox {
         } else if (Date.now() - idleSince > 500) break;
       }
       this.changed();
+      await this.detectChanges().catch(() => {});
       return {
         stdout: partial.stdout,
         stderr: partial.stderr,
@@ -256,15 +274,26 @@ export class WasmerSandbox implements Sandbox {
     return this.recover(() => this.handle.fs.readText(this.absolute(path)));
   }
   async writeFile(path: string, data: Uint8Array | string) {
+    const existed = this.digests.has(path) || (await this.stat(path)) !== null;
     await this.recover(async () => {
       const directory = path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
       if (directory) await this.handle.fs.mkdir(this.absolute(directory), { recursive: true });
       await this.handle.fs.writeFile(this.absolute(path), data);
     });
+    if (!isIgnoredPath(path)) {
+      const bytes = typeof data === "string" ? new TextEncoder().encode(data) : data;
+      this.digests.set(path, digest(bytes));
+      this.emitFileChanges(existed ? { changed: [path] } : { added: [path] });
+    }
     this.changed();
   }
   async deleteFile(path: string) {
     await this.recover(() => this.handle.fs.remove(this.absolute(path), { recursive: true }));
+    const removed = [...this.digests.keys()].filter(
+      (known) => known === path || known.startsWith(`${path}/`),
+    );
+    for (const known of removed) this.digests.delete(known);
+    if (removed.length) this.emitFileChanges({ removed });
     this.changed();
   }
   async exists(path: string) {
@@ -304,6 +333,49 @@ export class WasmerSandbox implements Sandbox {
     return () => {
       this.listeners.delete(listener);
     };
+  }
+
+  /**
+   * Exact file change events. Writes through this object report their path
+   * at once; shell commands are diffed against the last known contents when
+   * they finish. Processes that write files on their own are not observed.
+   */
+  onFilesChanged(listener: (event: FileChanges) => void) {
+    this.fileListeners.add(listener);
+    return () => {
+      this.fileListeners.delete(listener);
+    };
+  }
+
+  private emitFileChanges(event: FileChanges) {
+    if (!this.fileListeners.size) return;
+    const full = {
+      added: event.added ?? [],
+      changed: event.changed ?? [],
+      removed: event.removed ?? [],
+    };
+    if (!full.added.length && !full.changed.length && !full.removed.length) return;
+    for (const listener of this.fileListeners) listener(full);
+  }
+
+  /** Compare every workspace file with the known digests and report the differences. */
+  async detectChanges() {
+    const current = new Map<string, string>();
+    for (const path of await this.listFiles())
+      if (!isIgnoredPath(path)) current.set(path, digest(await this.readFile(path)));
+    const added: string[] = [];
+    const changed: string[] = [];
+    const removed: string[] = [];
+    for (const [path, hash] of current) {
+      const known = this.digests.get(path);
+      if (known === undefined) added.push(path);
+      else if (known !== hash) changed.push(path);
+    }
+    for (const path of this.digests.keys()) if (!current.has(path)) removed.push(path);
+    this.digests = current;
+    // The first pass only records the baseline.
+    if (this.digestsSeeded) this.emitFileChanges({ added, changed, removed });
+    this.digestsSeeded = true;
   }
 
   /** Everything under the workspace except ignored directories, for persistence. */

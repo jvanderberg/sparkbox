@@ -299,9 +299,14 @@ export function usePreview(sandbox: WasmerSandbox | null, origin: string) {
           (line) => service?.handleLine(line),
         );
         service = new EsbuildService(sandbox, started.write);
+        // File changes the page knows about go straight to the dev server.
+        const unsubscribe = sandbox.onFilesChanged((event) => {
+          void started.write(JSON.stringify({ op: "files", ...event })).catch(() => {});
+        });
         process.current = started.process;
         setRunning(true);
         void started.done.then((code) => {
+          unsubscribe();
           void service?.dispose();
           if (process.current === started.process) {
             process.current = null;

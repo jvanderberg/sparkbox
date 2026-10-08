@@ -292,6 +292,21 @@ await withLogs(
 const preserved = await content.getByRole("button", { name: "count 2" }).isVisible();
 console.log("fast refresh applied; component state preserved:", preserved);
 if (!preserved) throw new Error("Fast Refresh lost component state (the page reloaded)");
+// An edit made by a shell command is noticed when the command finishes.
+const shellEdit = Date.now();
+await run(
+  `node -e "const fs=require('fs');fs.writeFileSync('src/App.tsx',fs.readFileSync('src/App.tsx','utf8').replace('hello refresh','hello shell'))"`,
+);
+await withLogs(
+  "shell edit",
+  content.getByRole("heading", { name: "hello shell" }).waitFor({ timeout: 60_000 }),
+);
+const shellPreserved = await content.getByRole("button", { name: "count 2" }).isVisible();
+console.log(
+  `shell edit hot updated in ${Date.now() - shellEdit} ms; state preserved:`,
+  shellPreserved,
+);
+if (!shellPreserved) throw new Error("shell edit lost component state");
 await dumpLogs("final");
 await browser.close();
 if (errors.length) console.log(`page errors:\n${errors.join("\n")}`);

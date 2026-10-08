@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
+import readline from "node:readline";
 import { pathToFileURL } from "node:url";
 
 const root = process.cwd();
@@ -104,12 +105,14 @@ if (args.includes("--debug") || args.includes("-d")) {
 }
 
 // File notifications do not exist in this runtime and modification times
-// never change, so Vite's watcher is replaced by a content scan: every file
-// outside dependency and output folders is hashed twice a second and Vite's
-// own change handlers are invoked for anything that differs.
+// never change, so Vite's watcher is replaced: the Sparkbox page reports
+// exact paths over stdin for every edit it makes or sees a shell command
+// make, and a slow content scan covers processes that write files on their
+// own.
 function sparkboxWatcher() {
   const ignored = new Set(["node_modules", ".git", "dist", ".sparkbox", ".vite", ".cache"]);
   const limit = 2 * 1024 * 1024;
+  const fallbackInterval = 10_000;
   return {
     name: "sparkbox-watcher",
     configureServer(server) {
@@ -155,6 +158,33 @@ function sparkboxWatcher() {
         seen = current;
         ready = true;
       };
+      // Reported paths are workspace-relative; the scan's view is updated so
+      // the fallback does not report them a second time.
+      const report = (event, files) => {
+        for (const relative of files) {
+          const file = join(root, relative);
+          if (event === "unlink") seen.delete(file);
+          else {
+            try {
+              seen.set(file, digest(file));
+            } catch {}
+          }
+          server.watcher.emit(event, file);
+        }
+      };
+      const lines = readline.createInterface({ input: process.stdin });
+      lines.on("line", (line) => {
+        let message;
+        try {
+          message = JSON.parse(line);
+        } catch {
+          return;
+        }
+        if (message.op !== "files") return;
+        report("add", message.added ?? []);
+        report("change", message.changed ?? []);
+        report("unlink", message.removed ?? []);
+      });
       scan();
       const timer = setInterval(() => {
         if (busy) return;
@@ -166,8 +196,11 @@ function sparkboxWatcher() {
         } finally {
           busy = false;
         }
-      }, 500);
-      server.httpServer?.once("close", () => clearInterval(timer));
+      }, fallbackInterval);
+      server.httpServer?.once("close", () => {
+        clearInterval(timer);
+        lines.close();
+      });
     },
   };
 }
