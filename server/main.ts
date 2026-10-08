@@ -8,6 +8,7 @@ import { createReadStream, existsSync, statSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { extname, join, normalize } from "node:path";
 import { WebSocketServer } from "ws";
+import { serveFetchProxy } from "./fetch-proxy.ts";
 import { DailyCounter, mintToken, verifyToken } from "./tokens.ts";
 import { defaultAllowlist, serveWisp } from "./wisp.ts";
 
@@ -126,6 +127,7 @@ async function handleApi(request: IncomingMessage, response: ServerResponse, url
     return sendJson(response, 200, {
       previewOrigin,
       wispUrl: secret ? `${publicOrigin.replace(/^http/, "ws")}/wisp/` : "",
+      fetchUrl: secret ? `${publicOrigin}/api/fetch` : "",
       freeAgent: freeAgentEnabled ? { label: freeLabel, model: freeModel } : null,
     });
   }
@@ -146,6 +148,19 @@ async function handleApi(request: IncomingMessage, response: ServerResponse, url
       return sendJson(response, 403, { error: "That invite code is not valid." });
     log(`invite accepted from ${ip}`);
     return sendJson(response, 200, { token: mintToken(secret) });
+  }
+  if (url.pathname === "/api/fetch") {
+    // The download tool's fallback for sites without CORS headers. Bytes count
+    // against the same daily budget as the relay. URLs are never logged.
+    if (!secret) return sendJson(response, 503, { error: "The fetch proxy is not enabled." });
+    const session = verifyToken(secret, bearer(request));
+    if (!session) return sendJson(response, 401, { error: "Enter a valid invite code first." });
+    return serveFetchProxy(request, response, url.searchParams.get("url"), {
+      byteBudget: Math.max(0, limits.relayBytesPerTokenPerDay - relayBytes.get(session.id)),
+      onBytes: (count) => relayBytes.add(session.id, count),
+      log: (message) => log(`proxy ${session.id}: ${message}`),
+      headers: isolation,
+    });
   }
   if (url.pathname === "/api/agent/chat/completions" && request.method === "POST") {
     if (!freeAgentEnabled)

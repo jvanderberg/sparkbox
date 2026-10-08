@@ -35,6 +35,8 @@ export type RunnerOptions = {
   workspace: string;
   sandbox: Sandbox;
   networkEnabled: () => boolean;
+  /** The host fetch proxy and the invite token, when both exist. */
+  fetchProxy?: () => { url: string; token: string } | undefined;
   previewPort: number;
   /** Errors the preview page reported since it was started, oldest first. */
   previewErrors?: () => string[];
@@ -223,6 +225,7 @@ export class AgentRunner {
           signal: controller.signal,
           system,
           preview: this.options.preview,
+          fetchProxy: this.options.fetchProxy?.(),
           sink: {
             text: (id, delta) => {
               if (!controller.signal.aborted) this.emit({ type: "text", id, text: delta });

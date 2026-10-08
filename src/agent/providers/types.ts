@@ -71,6 +71,8 @@ export type TurnContext = {
   system: string;
   sink: TurnSink;
   preview?: PreviewController;
+  /** The host's fetch proxy for the download tool, when an invite is held. */
+  fetchProxy?: { url: string; token: string };
 };
 
 /** One provider-specific conversation. History stays in memory per session. */

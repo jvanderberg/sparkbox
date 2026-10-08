@@ -26,6 +26,8 @@ Status as of 2026-10-05. Prototype only.
 
 - [x] Prompt benchmark (2026-10-08): `scripts/benchmark-run.ts` drives the in-page agent through the real UI on the Oak Park transit brief (`docs/benchmark.md`, reports in `docs/benchmark-runs/`). The baseline run never got the app running; the prompt now states what the relay reaches, which native tools do not run, that the Vite launcher appears when the preview starts and that `vite build` cannot run from a shell, that data typed from memory is invented, and when to stop and report. Found and fixed on the way: the preview probe's forced light/dark schemes were inverted by an extra escape level in the bridge script (the browser smoke now asserts on the rendered background), and exports under `artifacts/` triggered dev-server reloads.
 
+- [x] Fetch proxy on the host (2026-10-08): `GET /api/fetch?url=…` fetches a URL for the download tool when the site sends no CORS headers (invite token, GET only, public hosts only including through redirects, 25 MiB cap, the relay's daily byte budget, URLs never logged). The tool tries the browser first and falls back when a host is configured. Unit tests in `tests/fetch-proxy.test.ts`; checked end to end by `scripts/host-smoke.ts`.
+
 ## Not done
 
 - [x] Anthropic adapter verified live on 2026-10-05 with Opus 5.5 (`npm run test:live:anthropic`): bash and text-editor tools, streamed reply, preview, changes and transcript restore after reload. Fixed a doubled-delta bug from a StrictMode double subscription.
@@ -39,6 +41,7 @@ Status as of 2026-10-05. Prototype only.
 - [ ] Remove the leftover Civic Spark portal CSS from `src/styles.css` and the unused `claude`/`opencode` provider names in `src/agents/protocol.ts`.
 - [ ] Vite 8 (Rolldown) in the sandbox: needs the two-way plugin callbacks bridged to Rolldown's browser build; Vite 7 is pinned until then.
 - [ ] Tailwind v4 in the sandbox: its core is JavaScript but Lightning CSS and the Oxide scanner are native; run them in the page through the same channel.
+- [ ] Vite preview never serves the entry in projects with larger dependency sets (benchmark runs 4 and 5: React, Leaflet, Tailwind v3, lucide-react, class-variance-authority): the server listens, requests for `/src/main.tsx` time out, and the next shell command hangs. Minimal React projects start in seconds. Suspect: dependency pre-bundling of a large package through the esbuild bridge saturating the runtime. Not reproduced in isolation yet.
 - [ ] Sandbox hangs seen in the benchmark: a failed `vite build` from a shell (the esbuild package trying to start its binary) leaves every later command hanging and Stop cannot end the turn; a second small `pnpm add` can hang past its timeout; the provider session is persisted only when a turn ends, so a reload after a stuck turn reverts the model's memory to the previous turn. Reproduced with `sparkboxExec` on 2026-10-08.
 - [ ] Reproduce the "Scheduler is dead" crash deliberately to confirm the automatic rebuild path end to end; today it is covered by code review and the recovery wrapper only.
 - [ ] Explain blocked network requests in the preview (which host, why) instead of a generic module error.

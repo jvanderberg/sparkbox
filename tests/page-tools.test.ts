@@ -36,6 +36,65 @@ describe("download tool", () => {
   });
 });
 
+describe("download tool through the host proxy", () => {
+  it("falls back to the proxy when the browser is refused", async () => {
+    const calls: { url: string; auth: string }[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL, init?: RequestInit) => {
+        const url = String(input);
+        calls.push({
+          url,
+          auth: String((init?.headers as Record<string, string>)?.authorization ?? ""),
+        });
+        if (url.startsWith("https://api.example.org/")) throw new TypeError("Failed to fetch");
+        return new Response('{"ok":true}', { headers: { "content-type": "application/json" } });
+      }),
+    );
+    const sandbox = new MemorySandbox();
+    const result = await downloadTool(
+      sandbox,
+      { url: "https://api.example.org/arrivals?key=k&id=1", path: "data/arrivals.json" },
+      undefined,
+      { url: "https://host.example/api/fetch", token: "tok" },
+    );
+    expect(result.error).toBeUndefined();
+    expect(result.output).toMatch(
+      /Saved data\/arrivals\.json \(11 bytes, application\/json\) through the host/,
+    );
+    expect(calls).toEqual([
+      { url: "https://api.example.org/arrivals?key=k&id=1", auth: "" },
+      {
+        url: "https://host.example/api/fetch?url=https%3A%2F%2Fapi.example.org%2Farrivals%3Fkey%3Dk%26id%3D1",
+        auth: "Bearer tok",
+      },
+    ]);
+    expect(await sandbox.readText("data/arrivals.json")).toBe('{"ok":true}');
+  });
+  it("reports the proxy's own refusal", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL) => {
+        if (String(input).startsWith("http://localhost")) throw new TypeError("Failed to fetch");
+        return new Response('{"error":"That host is not reachable through the proxy."}', {
+          status: 403,
+          headers: { "content-type": "application/json" },
+        });
+      }),
+    );
+    const result = await downloadTool(
+      new MemorySandbox(),
+      { url: "http://localhost:4330/healthz" },
+      undefined,
+      { url: "https://host.example/api/fetch", token: "tok" },
+    );
+    expect(result.error).toBe(true);
+    expect(result.output).toMatch(
+      /through the host failed with HTTP 403: That host is not reachable/,
+    );
+  });
+});
+
 describe("preview tool", () => {
   function controller(): PreviewController & { requests: unknown[] } {
     const requests: unknown[] = [];

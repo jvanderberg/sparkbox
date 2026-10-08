@@ -78,6 +78,37 @@ console.log(
   (installed.stdout + installed.stderr).trim().slice(-300),
 );
 if (!/require ok true/.test(installed.stdout)) throw new Error("pnpm install via relay failed");
+// The fetch proxy: a site without CORS headers through the host, no token refused,
+// a loopback target refused.
+// Three evaluations without inner function declarations: tsx wraps those in an
+// esbuild helper that does not exist inside the page.
+const proxyCall = (target: string, auth: boolean) =>
+  page.evaluate(
+    async ([target, auth]) => {
+      const token = localStorage.getItem("sparkbox:key:sparkbox") ?? "";
+      const config = (await (await fetch("/config.json")).json()) as { fetchUrl: string };
+      const response = await fetch(`${config.fetchUrl}?url=${encodeURIComponent(target)}`, {
+        headers: auth ? { authorization: `Bearer ${token}` } : {},
+      });
+      return {
+        fetchUrl: config.fetchUrl,
+        status: response.status,
+        bytes: (await response.arrayBuffer()).byteLength,
+      };
+    },
+    [target, auth] as const,
+  );
+const proxied = {
+  example: await proxyCall("https://example.com/", true),
+  noToken: await proxyCall("https://example.com/", false),
+  loopback: await proxyCall("http://127.0.0.1:4330/healthz", true),
+};
+console.log("fetch proxy:", JSON.stringify(proxied));
+if (!proxied.example.fetchUrl) throw new Error("config.json has no fetchUrl");
+if (proxied.example.status !== 200 || proxied.example.bytes < 100)
+  throw new Error("proxy did not fetch example.com");
+if (proxied.noToken.status !== 401) throw new Error("proxy accepted a request without a token");
+if (proxied.loopback.status !== 403) throw new Error("proxy reached a loopback address");
 await browser.close();
 if (errors.length) console.log(`page errors:\n${errors.join("\n")}`);
 console.log("ok host");

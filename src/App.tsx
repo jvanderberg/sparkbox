@@ -306,6 +306,10 @@ function ProjectSession({
             workspace: project.id,
             sandbox: instance,
             networkEnabled: () => Boolean(wispUrl),
+            fetchProxy: () => {
+              const token = settings.key("sparkbox");
+              return host.fetchUrl && token ? { url: host.fetchUrl, token } : undefined;
+            },
             previewPort,
             previewErrors: () => controller.recentErrors(),
             preview: controller,

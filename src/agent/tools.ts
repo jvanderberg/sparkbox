@@ -303,10 +303,14 @@ function filenameFromUrl(url: URL) {
   return last && !last.includes("..") ? decodeURIComponent(last) : "download";
 }
 
+/** The host's fetch proxy, used when the browser itself is refused. */
+export type FetchProxy = { url: string; token: string };
+
 export async function downloadTool(
   sandbox: Sandbox,
   args: Record<string, unknown>,
   signal?: AbortSignal,
+  proxy?: FetchProxy,
 ): Promise<ToolOutcome> {
   let url: URL;
   try {
@@ -322,13 +326,36 @@ export async function downloadTool(
   );
   if (!relative) return { output: "A file path is required.", error: true };
   let response: Response;
+  let via = "";
   try {
     response = await fetch(url, { signal, mode: "cors", credentials: "omit" });
   } catch (error) {
-    return {
-      output: `Could not fetch ${url.href}: ${error instanceof Error ? error.message : String(error)}. The server probably does not allow cross-origin reads. Ask the user to download the file and upload it through Files, or use a source that supports CORS.`,
-      error: true,
-    };
+    const reason = error instanceof Error ? error.message : String(error);
+    if (!proxy || signal?.aborted)
+      return {
+        output: `Could not fetch ${url.href}: ${reason}. The server probably does not allow cross-origin reads. Ask the user to download the file and upload it through Files, or use a source that supports CORS.`,
+        error: true,
+      };
+    // The site refused the browser (no CORS headers); let the host fetch it.
+    try {
+      response = await fetch(`${proxy.url}?url=${encodeURIComponent(url.href)}`, {
+        signal,
+        headers: { authorization: `Bearer ${proxy.token}` },
+      });
+    } catch (proxyError) {
+      return {
+        output: `Could not fetch ${url.href}: the browser was refused (${reason}) and the host proxy failed (${proxyError instanceof Error ? proxyError.message : String(proxyError)}). Ask the user to download the file and upload it through Files.`,
+        error: true,
+      };
+    }
+    via = " through the host";
+    if (!response.ok) {
+      const detail = (await response.json().catch(() => ({}))) as { error?: string };
+      return {
+        output: `Fetching ${url.href} through the host failed with HTTP ${response.status}${detail.error ? `: ${detail.error}` : ""}.`,
+        error: true,
+      };
+    }
   }
   if (!response.ok)
     return { output: `Fetching ${url.href} failed with HTTP ${response.status}.`, error: true };
@@ -339,7 +366,7 @@ export async function downloadTool(
     return { output: "The file exceeds the 25 MiB limit.", error: true };
   await sandbox.writeFile(relative, bytes);
   const type = response.headers.get("content-type") ?? "unknown type";
-  return { output: `Saved ${relative} (${bytes.byteLength} bytes, ${type}).` };
+  return { output: `Saved ${relative} (${bytes.byteLength} bytes, ${type})${via}.` };
 }
 
 export async function previewTool(
@@ -452,9 +479,15 @@ export async function previewTool(
 export async function runPageTool(
   name: string,
   args: Record<string, unknown>,
-  context: { sandbox: Sandbox; preview?: PreviewController; signal?: AbortSignal },
+  context: {
+    sandbox: Sandbox;
+    preview?: PreviewController;
+    signal?: AbortSignal;
+    fetchProxy?: FetchProxy;
+  },
 ): Promise<ToolOutcome | null> {
-  if (name === "download") return downloadTool(context.sandbox, args, context.signal);
+  if (name === "download")
+    return downloadTool(context.sandbox, args, context.signal, context.fetchProxy);
   if (name === "preview") return previewTool(context.preview, args);
   return null;
 }

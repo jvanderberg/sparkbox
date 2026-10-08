@@ -15,7 +15,7 @@ Sparkbox is derived from [Civic Spark](https://github.com/jvanderberg/civic-spar
 
 Besides each provider's native file and shell tools, the agent gets two tools that run in the page rather than in the sandbox:
 
-- **download**: fetches a URL with the browser and saves it into the project. Works wherever the server allows cross-origin reads (open-data portals, GitHub raw files, npm, CDNs). When CORS blocks it, the agent asks for an upload.
+- **download**: fetches a URL with the browser and saves it into the project. Works wherever the server allows cross-origin reads (open-data portals, GitHub raw files, npm, CDNs). When the browser is refused and the browser holds an invite, the host's fetch proxy (`GET /api/fetch?url=…`) fetches it instead: GET only, no cookies, private addresses refused, 25 MiB cap, counted against the invite's daily relay budget, URLs never logged. Without a host, the agent asks for an upload.
 - **preview**: looks at the running app. Formats: a screenshot at phone, tablet or desktop size in a chosen color scheme, a text outline of headings, links, buttons, inputs, images, stylesheets, scheme and overflow, the current HTML, or the page errors on a fresh load plus those the user hit. Screenshots are painted by the browser from the live DOM through an SVG (modern-screenshot, with html2canvas as fallback) in a probe frame kept inside the viewport so animations finish; the probe forces `prefers-color-scheme` by patching `matchMedia`, the root `color-scheme` and media rules. Screenshots go back to Claude and OpenAI inside the tool result and to OpenRouter models as a follow-up user message. `scripts/preview-tool-check.ts` compares them with a native capture of a Leaflet map.
 
 ## Providers
@@ -36,7 +36,8 @@ The deployed site is https://sparkbox.fly.dev. One small Fly machine runs `serve
 - publishes `/config.json` so the app learns the preview origin, the relay URL and whether the free agent is on;
 - mints signed invite tokens at `POST /api/invite` from `SPARKBOX_INVITE_CODES`;
 - proxies the **Sparkbox** provider at `/api/agent/chat/completions` to OpenRouter with the server-held key, a fixed cheap model (`SPARKBOX_FREE_MODEL`, default Claude Haiku 5.5) and daily limits per token and overall;
-- relays WISP at `/wisp/<token>/` so the sandbox gets outbound TCP to an allowlist of package registries and CDNs, enforced on the TLS server name of each stream.
+- relays WISP at `/wisp/<token>/` so the sandbox gets outbound TCP to an allowlist of package registries and CDNs, enforced on the TLS server name of each stream;
+- fetches URLs for the download tool at `/api/fetch` when a site sends no CORS headers (token required, GET only, public hosts only, size cap, same daily byte budget as the relay).
 
 It stores nothing. Tokens are HMAC-signed, counters live in memory, and the machine stops when idle (`auto_stop_machines`). Secrets: `SPARKBOX_TOKEN_SECRET`, `SPARKBOX_INVITE_CODES`, `SPARKBOX_OPENROUTER_KEY`. Deploy with `fly deploy --remote-only --ha=false`. Static-only hosting (no server) still works; the app then has no free agent and no relay, and the preview origin must be set in Settings.
 

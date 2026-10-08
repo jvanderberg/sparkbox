@@ -5,6 +5,8 @@
 export type HostConfig = {
   previewOrigin: string;
   wispUrl: string;
+  /** The host's fetch proxy for the download tool; empty without a host. */
+  fetchUrl: string;
   freeAgent: { label: string; model: string } | null;
 };
 
@@ -18,13 +20,14 @@ export function hostConfig(): Promise<HostConfig> {
       return {
         previewOrigin: typeof data.previewOrigin === "string" ? data.previewOrigin : "",
         wispUrl: typeof data.wispUrl === "string" ? data.wispUrl : "",
+        fetchUrl: typeof data.fetchUrl === "string" ? data.fetchUrl : "",
         freeAgent:
           data.freeAgent && typeof data.freeAgent.model === "string"
             ? { label: String(data.freeAgent.label || "Sparkbox"), model: data.freeAgent.model }
             : null,
       };
     })
-    .catch(() => ({ previewOrigin: "", wispUrl: "", freeAgent: null }));
+    .catch(() => ({ previewOrigin: "", wispUrl: "", fetchUrl: "", freeAgent: null }));
   return loaded;
 }
 
