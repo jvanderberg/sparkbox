@@ -28,6 +28,14 @@ const isolation = {
  *    the embedding valid while allowing credential-free cross-origin loads.
  *    Safari lacks credentialless, so guidance also asks for `crossorigin`
  *    attributes on CDN tags.
+ * 3. It serves the page bridge and injects it into guest HTML (below).
+ * 4. It keeps the registered route in memory until a close message arrives,
+ *    and a page that reloads never sends one: its hidden host iframe, which
+ *    holds the other end of the route's MessagePort, dies with it. The worker
+ *    then refuses the reloaded page's expose() with "already exposes another
+ *    guest server" until the browser retires the idle worker. Each route now
+ *    remembers the host document that registered it, and a route whose
+ *    document is gone is dropped before a new registration is judged.
  * Each replacement asserts its anchor so an SDK upgrade fails loudly here.
  */
 function patchServiceWorker(source: string) {
@@ -64,6 +72,34 @@ function injectBridge(body, headers) {
     headers.delete("content-length");
     return new TextEncoder().encode(out).buffer;
 }`;
+  replace(
+    "        event.waitUntil((async () => {\n            await recoverRoute();\n            if (activeRoute) {",
+    "        event.waitUntil((async () => {\n            await recoverRoute();\n            await dropOrphanedRoute();\n            if (activeRoute) {",
+  );
+  replace(
+    "            registerRoute(message.serverId, port);\n        })());",
+    "            registerRoute(message.serverId, port, event.source?.id);\n        })());",
+  );
+  replace(
+    "function registerRoute(id, port) {\n    const route = { id, port, pending: new Map() };",
+    "function registerRoute(id, port, clientId) {\n    const route = { id, port, pending: new Map(), clientId };",
+  );
+  replace(
+    "                if (!activeRoute)\n                    registerRoute(event.data.serverId, port);",
+    "                if (!activeRoute)\n                    registerRoute(event.data.serverId, port, client.id);",
+  );
+  source = `${source}
+// The route's MessagePort lives in the host document that registered it; when
+// that document is gone (the app page reloaded or closed) the port is dead and
+// the route can only block the next owner.
+async function dropOrphanedRoute() {
+    const route = activeRoute;
+    if (!route?.clientId) return;
+    const owner = await scope.clients.get(route.clientId);
+    if (owner || activeRoute !== route) return;
+    closeRoute(route.id);
+}
+`;
   replace(
     'if (url.pathname.startsWith("/.wasmer/"))\n        return;',
     'if (url.origin !== self.location.origin || url.pathname.startsWith("/.wasmer/"))\n        return;',

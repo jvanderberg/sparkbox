@@ -249,6 +249,28 @@ async function run(label: string, options: { mobile?: boolean; dark?: boolean })
   await page
     .locator(".file-diff summary code", { hasText: "index.html" })
     .waitFor({ timeout: 20_000 });
+  if (!options.mobile) {
+    // A reloaded page must be able to expose the preview again. The preview
+    // origin's service worker outlives the page and still holds the route the
+    // old page registered; it has to notice that owner is gone rather than
+    // refuse with "already exposes another guest server".
+    await page.reload();
+    await page.getByText("Sandbox ready").waitFor({ state: "attached", timeout: 180_000 });
+    await tabs.getByRole("button", { name: "Preview" }).click();
+    await page.locator(".preview-panel").getByRole("button", { name: "Preview" }).click();
+    const alert = page.locator(".preview-error");
+    await Promise.race([
+      frame.waitFor({ timeout: 180_000 }),
+      alert.waitFor({ timeout: 180_000 }).then(async () => {
+        throw new Error(`preview after reload failed: ${await alert.textContent()}`);
+      }),
+    ]);
+    await frame
+      .contentFrame()
+      .getByRole("heading", { name: `Smoke ${label}` })
+      .waitFor({ timeout: 60_000 });
+    console.log(`${label} preview survives a reload`);
+  }
   await context.close();
   await browser.close();
   const real = errors.filter((text) => !/favicon|DevTools|smoke page error/.test(text));

@@ -149,9 +149,9 @@ export function App() {
             <legend>Secrets for {open.name}</legend>
             <p className="muted">
               API keys and tokens the app needs. They stay in this browser, reach every command and
-              the preview server as environment variables, can be written as {`$\{NAME}`} in download
-              URLs, and are redacted from what the agent sees. Tell the agent the name, never the
-              value.
+              the preview server as environment variables, can be written as {`$\{NAME}`} in
+              download URLs, and are redacted from what the agent sees. Tell the agent the name,
+              never the value.
             </p>
             {secretRows.map((row, index) => (
               <div className="secret-row" key={row.id}>
