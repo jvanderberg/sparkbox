@@ -14,14 +14,11 @@ function randomState() {
   return `gh-${[...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("")}`;
 }
 
-function callbackUrl() {
-  return `${location.origin}/`;
-}
-
 function authorizeUrl(clientId: string, state: string) {
   const url = new URL("https://github.com/login/oauth/authorize");
   url.searchParams.set("client_id", clientId);
-  url.searchParams.set("redirect_uri", callbackUrl());
+  // No redirect_uri: GitHub sends the user to the app's registered callback
+  // (the site's origin), so a trailing-slash difference cannot refuse it.
   url.searchParams.set("scope", scopes);
   url.searchParams.set("state", state);
   return url.href;
