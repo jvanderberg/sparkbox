@@ -116,6 +116,30 @@ async function run(label: string, options: { mobile?: boolean; dark?: boolean })
     );
   await page.getByRole("button", { name: /Remove photo\.png/ }).click();
   await page.screenshot({ path: `artifacts/smoke-${label}-agent.png` });
+  // A new project is only PROJECT.md: the preview says so instead of serving a 404.
+  await tabs.getByRole("button", { name: "Preview" }).click();
+  await page.locator(".preview-panel").getByRole("button", { name: "Preview" }).click();
+  await page.getByRole("alert").filter({ hasText: "Nothing to preview yet" }).waitFor();
+  console.log(`${label} empty project refuses to preview`);
+  // The page an agent would have written: the rest of the smoke drives it.
+  await write(
+    "index.html",
+    `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Smoke ${label}</title><link rel="stylesheet" href="./styles.css"></head><body><main><h1>Smoke ${label}</h1><button id="count" type="button">Clicked 0 times</button></main><script type="module" src="./app.js"></script></body></html>`,
+  );
+  await write(
+    "styles.css",
+    ":root{color-scheme:light dark;font-family:system-ui,sans-serif}body{margin:0;display:grid;place-items:center;min-height:100vh}",
+  );
+  await write(
+    "app.js",
+    `const button = document.querySelector("#count");
+let clicks = 0;
+button.addEventListener("click", () => {
+  clicks += 1;
+  button.textContent = \`Clicked \${clicks} times\`;
+});
+`,
+  );
   await tabs.getByRole("button", { name: "Files" }).click();
   // Phones start with the explorer collapsed to a rail.
   const expand = page.getByRole("button", { name: "Show file explorer" });

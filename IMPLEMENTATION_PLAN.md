@@ -9,7 +9,7 @@ Status as of 2026-10-05. Prototype only.
 - [x] In-browser agent runner (`src/agent/runner.ts`) emitting the Civic Spark event protocol; queue, steer, stop, transcript and session persistence.
 - [x] Provider sessions: Anthropic (bash + text editor), OpenAI Responses (shell + apply_patch with a V4A patch applier), OpenRouter (function tools). OpenRouter OAuth PKCE sign-in.
 - [x] Preview: static server script run by Edge.js inside the sandbox, exposed through the Wasmer service worker on a second origin; Vite plugin serves the host files in dev and emits them in the build.
-- [x] Projects home, settings (preview origin, WISP relay), starter template.
+- [x] Projects home, settings (preview origin, WISP relay), starter template (PROJECT.md only; the agent scaffolds the stack).
 - [x] Unit tests: patch parser/applier, tools, changes diffing, runner sequence/queue/stop/failure. Browser smoke on desktop and a Pixel 7 profile in dark mode.
 
 - [x] Preview can load CDN libraries and map tiles (2026-10-06): the SDK service worker forwarded every request into the sandbox and forced `require-corp` on the preview document; both are patched in the Vite plugin, verified by the browser smoke (fetch, dynamic import, classic script) and a live OpenRouter Leaflet turn.

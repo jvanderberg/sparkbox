@@ -77,6 +77,16 @@ async function dependenciesMissing(sandbox: WasmerSandbox) {
   }
 }
 
+export const nothingToPreview =
+  "Nothing to preview yet: the project has no index.html and no sparkbox.json. Ask the agent to build the app first.";
+
+/** The built-in static server has nothing to serve without an index.html. */
+async function nothingToServe(sandbox: WasmerSandbox, config: PreviewConfig) {
+  if (!/^node \.sparkbox\/serve\.mjs/.test(config.command)) return false;
+  const directory = config.directory.replace(/^\.\/?/, "").replace(/\/$/, "");
+  return !(await sandbox.exists(directory ? `${directory}/index.html` : "index.html"));
+}
+
 export function usePreview(sandbox: WasmerSandbox | null, origin: string) {
   const [url, setUrl] = useState("");
   const [running, setRunning] = useState(false);
@@ -309,6 +319,7 @@ export function usePreview(sandbox: WasmerSandbox | null, origin: string) {
         const current = await readPreviewConfig(sandbox);
         setConfig(current);
         configRef.current = current;
+        if (await nothingToServe(sandbox, current)) throw new Error(nothingToPreview);
         if (await dependenciesMissing(sandbox)) {
           // Reaches the panel and the agent's next turn; the command still runs.
           setLogs(`${missingDependenciesNote}\n`);
