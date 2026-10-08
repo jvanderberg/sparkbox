@@ -308,6 +308,32 @@ console.log(
 );
 if (!shellPreserved) throw new Error("shell edit lost component state");
 await dumpLogs("final");
+// Runtime recovery: an unhandled promise rejection inside a guest Node
+// process escapes the runtime and crashes its browser worker (a raw
+// `vite build` does the same through Rollup's loader). The SDK then closes
+// its pool and later spawns would hang forever; the sandbox must notice and
+// rebuild itself so the next command runs.
+const crashed = Date.now();
+const crash = await Promise.race([
+  run("node -e 'Promise.reject(new Error(\"escaped\"))'; echo EXIT $?"),
+  new Promise<"hung">((resolve) => setTimeout(() => resolve("hung"), 60_000)),
+]);
+console.log(
+  "guest crash:",
+  typeof crash === "string" ? crash : JSON.stringify(crash).slice(0, 200),
+);
+const recovered = await Promise.race([
+  run("echo recovered"),
+  new Promise<"hung">((resolve) => setTimeout(() => resolve("hung"), 90_000)),
+]);
+if (typeof recovered === "string" || !/recovered/.test(recovered.stdout))
+  throw new Error(
+    `the sandbox did not recover from the worker crash: ${JSON.stringify(recovered)}`,
+  );
+console.log(`runtime recovered after a worker crash in ${Date.now() - crashed} ms`);
+await tabs.getByRole("button", { name: "Preview" }).click();
+await page.getByText("The sandbox runtime restarted").waitFor({ timeout: 10_000 });
+console.log("preview panel reports the restart");
 await browser.close();
 if (errors.length) console.log(`page errors:\n${errors.join("\n")}`);
 console.log("ok vite hmr");

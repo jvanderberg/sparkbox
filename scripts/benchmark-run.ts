@@ -72,9 +72,17 @@ const browser = await chromium.launch({ headless: true });
 const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
 const consoleErrors: string[] = [];
 page.on("console", (message) => {
-  if (message.type() === "error") consoleErrors.push(redact(message.text()));
+  if (message.type() === "error") {
+    const text = redact(message.text());
+    consoleErrors.push(text);
+    if (/wasmer|wisp|Atomics|scheduler|worker/i.test(text))
+      log(`page console error: ${text.slice(0, 300)}`);
+  }
 });
-page.on("pageerror", (error) => consoleErrors.push(redact(error.message)));
+page.on("pageerror", (error) => {
+  consoleErrors.push(redact(error.message));
+  log(`page error: ${redact(error.message).slice(0, 300)}`);
+});
 
 await page.goto(base);
 await page.evaluate(
@@ -117,6 +125,7 @@ async function reloadWorkspace(reason: string) {
   await page.getByText("Sandbox ready").waitFor({ state: "attached", timeout: 240_000 });
   await page.locator("nav.workspace-tabs").getByRole("button", { name: "Agent" }).click();
   await page.getByLabel("Message to agent").waitFor({ timeout: 30_000 });
+  await installRpcTracer();
 }
 async function exec(c: string) {
   try {
@@ -147,6 +156,68 @@ const previewTool = (request: Record<string, unknown>) =>
     120_000,
     `preview ${String(request.format)}`,
   );
+
+/**
+ * Diagnostics for sandbox hangs: every guest network call is an RPC to the page
+ * that blocks a runtime worker until answered. Wrap the SDK's handler to see
+ * which calls stay unanswered.
+ */
+async function installRpcTracer() {
+  await page.evaluate(() => {
+    type Rpc = { method: string; args: string; at: number; control: Int32Array };
+    const g = window as unknown as {
+      __wasmerHandleNetworkRpc?: (value: unknown) => boolean;
+      __rpcStats?: () => unknown;
+      __rpcLog: Rpc[];
+      __rpcTotal: number;
+    };
+    g.__rpcLog = [];
+    g.__rpcTotal = 0;
+    const original = g.__wasmerHandleNetworkRpc;
+    g.__wasmerHandleNetworkRpc = (value: unknown) => {
+      const request = value as {
+        type?: string;
+        method?: string;
+        args?: unknown[];
+        response?: SharedArrayBuffer;
+      };
+      if (request?.type === "wasmer-network-rpc" && request.response) {
+        g.__rpcTotal += 1;
+        g.__rpcLog.push({
+          method: String(request.method),
+          args: JSON.stringify(request.args ?? []).slice(0, 120),
+          at: Date.now(),
+          control: new Int32Array(request.response, 0, 4),
+        });
+        if (g.__rpcLog.length > 2000) g.__rpcLog.splice(0, 1000);
+      }
+      return original ? original(value) : false;
+    };
+    g.__rpcStats = () => {
+      const now = Date.now();
+      const pending = g.__rpcLog.filter((rpc) => Atomics.load(rpc.control, 0) === 0);
+      return {
+        total: g.__rpcTotal,
+        pending: pending.length,
+        stuck: pending
+          .filter((rpc) => now - rpc.at > 10_000)
+          .map((rpc) => `${rpc.method} ${rpc.args} (${Math.round((now - rpc.at) / 1000)}s)`)
+          .slice(0, 12),
+        wrapped: Boolean(original),
+      };
+    };
+  });
+}
+const rpcStats = () =>
+  withTimeout(
+    page.evaluate(
+      () => (window as unknown as { __rpcStats?: () => unknown }).__rpcStats?.() ?? null,
+    ),
+    10_000,
+    "rpc stats",
+  ).catch((e: Error) => ({ error: e.message }));
+await installRpcTracer();
+log(`rpc tracer: ${JSON.stringify(await rpcStats())}`);
 
 const providerValue = await page.getByLabel("Agent provider").inputValue();
 log(`provider select: ${providerValue}`);
@@ -216,6 +287,7 @@ async function sendTurn(turn: number, text: string) {
   let lastToolChange = Date.now();
   const stopTurn = async (why: string) => {
     log(`turn ${turn}: ${why}; stopping`);
+    log(`rpc stats at stop: ${JSON.stringify(await rpcStats())}`);
     interventions.push(`turn ${turn}: ${why}`);
     await stop.click().catch(() => {});
     const detached = await stop
@@ -253,8 +325,13 @@ async function sendTurn(turn: number, text: string) {
       } catch {
         latestName = latest?.text ?? "";
       }
+      const stats = (await rpcStats()) as {
+        total?: number;
+        pending?: number;
+        stuck?: string[];
+      } | null;
       log(
-        `turn ${turn}: ${Math.round((Date.now() - started) / 60_000)} min, ${tools.length} tool events; latest: ${latestName}`,
+        `turn ${turn}: ${Math.round((Date.now() - started) / 60_000)} min, ${tools.length} tool events; rpc ${stats?.total ?? "?"}/${stats?.pending ?? "?"} pending${stats?.stuck?.length ? ` STUCK ${JSON.stringify(stats.stuck)}` : ""}; latest: ${latestName}`,
       );
     }
     await page.waitForTimeout(5_000);

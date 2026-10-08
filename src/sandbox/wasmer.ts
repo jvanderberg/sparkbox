@@ -4,6 +4,7 @@ import type {
   Wasmer as WasmerClient,
   Sandbox as WasmerSandboxHandle,
 } from "@wasmer/sdk/browser";
+import { deadline, RuntimeHung } from "./deadline.ts";
 import { loadSnapshot, saveSnapshot } from "./storage.ts";
 import {
   type ExecOptions,
@@ -58,11 +59,19 @@ export type PreviewServer = { port: number; url: string; close: () => Promise<vo
 
 /** The SDK's worker pool can die; commands then fail until the sandbox is rebuilt. */
 export function isDeadRuntime(error: unknown) {
+  if (error instanceof RuntimeHung) return true;
   const message = error instanceof Error ? `${error.name} ${error.message}` : String(error);
   return /Scheduler is dead|thread pool is shut down|WORKER_FAILED|CLIENT_CLOSED|SANDBOX_CLOSED/i.test(
     message,
   );
 }
+
+/** How long a process may take to start, and how far past its own timeout it may run. */
+const SPAWN_DEADLINE_MS = 30_000;
+const EXIT_GRACE_MS = 30_000;
+/** Appended to the output of a command that was interrupted by a runtime rebuild. */
+export const restartedNotice =
+  "[the sandbox runtime stopped responding and was rebuilt; project files are intact, but dependencies must be reinstalled (pnpm install) and the preview started again]";
 
 type Boot = { client: WasmerClient; handle: WasmerSandboxHandle };
 
@@ -81,6 +90,8 @@ export class WasmerSandbox implements Sandbox {
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
   private saving: Promise<void> | null = null;
   private restarting: Promise<void> | null = null;
+  private probing: Promise<void> | null = null;
+  private detachErrorListener: (() => void) | null = null;
   private processes = new Set<Process>();
   private servers = new Map<number, BrowserServer>();
   private closed = false;
@@ -105,13 +116,57 @@ export class WasmerSandbox implements Sandbox {
     const boot = await WasmerSandbox.boot(files, options.wispUrl, options.onProgress);
     options.onProgress?.({ phase: snapshot ? "restoring" : "ready" });
     options.onProgress?.({ phase: "ready" });
-    return new WasmerSandbox(
+    const sandbox = new WasmerSandbox(
       boot.client,
       boot.handle,
       options.workspace,
       Boolean(snapshot),
       options.wispUrl,
     );
+    sandbox.watchForWorkerFailures();
+    return sandbox;
+  }
+
+  /**
+   * A guest exception that escapes the JavaScript runtime crashes its
+   * browser worker; the SDK reports it as a page error and closes the pool
+   * without failing later spawns. Probe the runtime after any page error
+   * and rebuild it if a trivial command no longer runs.
+   */
+  private watchForWorkerFailures() {
+    if (typeof window === "undefined") return;
+    const listener = () => void this.probe();
+    window.addEventListener("error", listener);
+    this.detachErrorListener = () => window.removeEventListener("error", listener);
+  }
+
+  /** Run a trivial command with a short deadline; rebuild the runtime if it hangs. */
+  probe(): Promise<void> {
+    if (this.probing) return this.probing;
+    if (this.closed || this.restarting) return Promise.resolve();
+    this.probing = (async () => {
+      try {
+        const process = await deadline(
+          this.handle.shell("true", { cwd: this.root }).spawn({
+            stdin: "closed",
+            stdout: "discard",
+            stderr: "discard",
+            timeoutMs: 10_000,
+          }),
+          10_000,
+          "start a process",
+        );
+        await deadline(process.wait(), 15_000, "finish a trivial command");
+      } catch (error) {
+        if (!this.closed && isDeadRuntime(error)) {
+          console.warn("sandbox runtime is not responding; rebuilding it", error);
+          await this.restart();
+        }
+      }
+    })().finally(() => {
+      this.probing = null;
+    });
+    return this.probing;
   }
 
   private static async boot(
@@ -157,15 +212,17 @@ export class WasmerSandbox implements Sandbox {
     this.restarting = (async () => {
       let files: Record<string, Uint8Array> = {};
       try {
-        files = await this.snapshot();
+        // The filesystem usually still answers after the pool died; the saved
+        // snapshot is the fallback when it does not.
+        files = await deadline(this.snapshot(), 20_000, "read the project files");
       } catch {
         files = (await loadSnapshot(this.workspace))?.files ?? {};
       }
       for (const server of this.servers.values()) await server.close().catch(() => {});
       this.servers.clear();
       this.processes.clear();
-      await this.handle.close().catch(() => {});
-      await this.client.close().catch(() => {});
+      await deadline(this.handle.close(), 10_000, "close").catch(() => {});
+      await deadline(this.client.close(), 10_000, "close").catch(() => {});
       const boot = await WasmerSandbox.boot(files, this.wispUrl);
       this.client = boot.client;
       this.handle = boot.handle;
@@ -202,13 +259,18 @@ export class WasmerSandbox implements Sandbox {
   }
 
   async exec(command: string, options: ExecOptions = {}): Promise<ExecResult> {
+    const timeoutMs = options.timeoutMs ?? 120_000;
     const process = await this.recover(() =>
-      this.handle.shell(command, { cwd: this.root, env: options.env }).spawn({
-        stdin: "closed",
-        stdout: "pipe",
-        stderr: "pipe",
-        timeoutMs: options.timeoutMs ?? 120_000,
-      }),
+      deadline(
+        this.handle.shell(command, { cwd: this.root, env: options.env }).spawn({
+          stdin: "closed",
+          stdout: "pipe",
+          stderr: "pipe",
+          timeoutMs,
+        }),
+        SPAWN_DEADLINE_MS,
+        "start a process",
+      ),
     );
     this.processes.add(process);
     const abort = () => void process.kill();
@@ -234,14 +296,27 @@ export class WasmerSandbox implements Sandbox {
       // Helper processes (pnpm workers, backgrounded servers) can keep the
       // pipes open after the command exits. Collect until exit plus a short
       // grace period instead of waiting for end of stream.
-      const output = await process.wait();
+      let output: Awaited<ReturnType<Process["wait"]>>;
+      try {
+        output = await deadline(process.wait(), timeoutMs + EXIT_GRACE_MS, "finish the command");
+      } catch (error) {
+        if (this.closed || !(error instanceof RuntimeHung)) throw error;
+        // The runtime's own timeout did not fire: its worker pool is gone.
+        await this.restart();
+        return {
+          stdout: partial.stdout,
+          stderr: `${partial.stderr}${partial.stderr.endsWith("\n") || !partial.stderr ? "" : "\n"}${restartedNotice}\n`,
+          exitCode: 137,
+          timedOut: true,
+        };
+      }
       // Output can still be in flight after exit; stop once both streams end or
       // nothing new has arrived for a moment (bounded at two seconds).
-      const deadline = Date.now() + 2000;
+      const settleBy = Date.now() + 2000;
       let seen = partial.stdout.length + partial.stderr.length;
       let idleSince = Date.now();
       const ended = Promise.all([outputs.stdout, outputs.stderr]).then(() => true);
-      while (Date.now() < deadline) {
+      while (Date.now() < settleBy) {
         const done = await Promise.race([
           ended,
           new Promise<false>((resolve) => setTimeout(() => resolve(false), 100)),
@@ -423,9 +498,13 @@ export class WasmerSandbox implements Sandbox {
     onRpc?: (line: string) => void,
   ): Promise<{ process: Process; done: Promise<number>; write: (line: string) => Promise<void> }> {
     const process = await this.recover(() =>
-      this.handle
-        .shell(command, { cwd: this.root })
-        .spawn({ stdin: "pipe", stdout: "pipe", stderr: "pipe" }),
+      deadline(
+        this.handle
+          .shell(command, { cwd: this.root })
+          .spawn({ stdin: "pipe", stdout: "pipe", stderr: "pipe" }),
+        SPAWN_DEADLINE_MS,
+        "start a process",
+      ),
     );
     this.processes.add(process);
     const pumpStderr = async () => {
@@ -481,9 +560,13 @@ export class WasmerSandbox implements Sandbox {
     onExit?: (code: number) => void,
   ): Promise<{ write: (line: string) => Promise<void>; kill: () => Promise<void> }> {
     const process = await this.recover(() =>
-      this.handle
-        .shell(command, { cwd: this.root })
-        .spawn({ stdin: "pipe", stdout: "pipe", stderr: "discard" }),
+      deadline(
+        this.handle
+          .shell(command, { cwd: this.root })
+          .spawn({ stdin: "pipe", stdout: "pipe", stderr: "discard" }),
+        SPAWN_DEADLINE_MS,
+        "start a process",
+      ),
     );
     this.processes.add(process);
     void (async () => {
@@ -544,6 +627,8 @@ export class WasmerSandbox implements Sandbox {
    */
   async close({ persist = true } = {}) {
     this.closed = true;
+    this.detachErrorListener?.();
+    this.detachErrorListener = null;
     for (const server of this.servers.values()) await server.close().catch(() => {});
     this.servers.clear();
     for (const process of this.processes) await process.kill().catch(() => {});

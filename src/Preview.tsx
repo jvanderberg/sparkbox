@@ -108,6 +108,10 @@ export function usePreview(sandbox: WasmerSandbox | null, origin: string) {
       setRunning(false);
       setPorts([]);
       setError("The sandbox runtime restarted. Start the preview again.");
+      setPageErrors((errors) => [
+        ...errors,
+        "The sandbox runtime was rebuilt: reinstall dependencies (pnpm install) and start the preview again.",
+      ]);
     });
   }, [sandbox]);
 
