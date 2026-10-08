@@ -64,15 +64,39 @@ export function proxyTarget(
   const host = url.hostname.toLowerCase();
   if (!host) return { status: 400, error: "A valid http(s) URL is required." };
   if (exempt.has(host)) return { url };
-  if (
-    host === "localhost" ||
-    host.endsWith(".localhost") ||
-    host.endsWith(".local") ||
-    host.endsWith(".internal") ||
-    (isIP(host.replace(/^\[|\]$/g, "")) && isPrivateAddress(host.replace(/^\[|\]$/g, "")))
-  )
+  if (isInternalName(host))
     return { status: 403, error: "That host is not reachable through the proxy." };
   return { url };
+}
+
+/** Names that never leave the machine or the private network, before any DNS. */
+export function isInternalName(host: string): boolean {
+  const bare = host.toLowerCase().replace(/^\[|\]$/g, "");
+  return (
+    bare === "localhost" ||
+    bare.endsWith(".localhost") ||
+    bare.endsWith(".local") ||
+    bare.endsWith(".internal") ||
+    (isIP(bare) !== 0 && isPrivateAddress(bare))
+  );
+}
+
+/**
+ * Resolves a public host name to one address, or null when the name is
+ * internal, does not resolve, or any answer is a private address.
+ */
+export async function publicAddress(host: string): Promise<string | null> {
+  const bare = host.toLowerCase().replace(/^\[|\]$/g, "");
+  if (isInternalName(bare)) return null;
+  if (isIP(bare)) return bare;
+  try {
+    const addresses = await lookup(bare, { all: true });
+    if (!addresses.length || addresses.some((entry) => isPrivateAddress(entry.address)))
+      return null;
+    return addresses[0]?.address ?? null;
+  } catch {
+    return null;
+  }
 }
 
 export type FetchProxyOptions = {

@@ -31,6 +31,20 @@ export function hostConfig(): Promise<HostConfig> {
   return loaded;
 }
 
+/**
+ * A short-lived relay URL for the sandbox, minted for this invite token. The
+ * invite itself never appears in the connection URL.
+ */
+export async function relayUrl(token: string): Promise<string> {
+  const response = await fetch("/api/relay", {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}` },
+  });
+  const data = (await response.json().catch(() => ({}))) as { url?: string; error?: string };
+  if (!response.ok || !data.url) throw new Error(data.error ?? "The relay refused this invite.");
+  return data.url;
+}
+
 /** Exchange an invite code for a session token. */
 export async function redeemInvite(code: string): Promise<string> {
   const response = await fetch("/api/invite", {

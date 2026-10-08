@@ -7,11 +7,15 @@
  *   0x03 CONTINUE [u32 LE buffer remaining]   (server → client flow control)
  *   0x04 CLOSE    [u8 reason]
  *
- * The sandbox resolves names itself and may CONNECT by IP, so the allowlist
- * is enforced on what the stream says it is talking to: the TLS server name
- * on 443 and the Host header on 80. Anything else is refused.
+ * The sandbox resolves names itself and may CONNECT by IP, so the checks are
+ * made on what the stream says it is talking to: the TLS server name on 443
+ * and the Host header on 80. That name is resolved here, refused when it is
+ * internal or points at a private address, matched against an optional
+ * allowlist, and the connection is pinned to the vetted address. Anything the
+ * relay cannot name is refused, so it carries HTTP and HTTPS only.
  */
 import { createConnection, type Socket } from "node:net";
+import { publicAddress } from "./fetch-proxy.ts";
 
 export const CONNECT = 0x01;
 export const DATA = 0x02;
@@ -120,13 +124,22 @@ export function hostAllowed(host: string, allowlist: string[]) {
 }
 
 export type RelayOptions = {
-  allowlist: string[];
+  /** Host patterns (exact or `*.suffix`) that restrict the relay; empty means any public host. */
+  allowlist?: string[];
   /** Bytes this connection may relay in total (both directions). */
   byteBudget: number;
   onBytes?: (count: number) => void;
   connectTimeoutMs?: number;
+  /** Streams open at once on this connection (default 64). */
+  maxStreams?: number;
   log?: (message: string) => void;
+  /** Test seam: resolve a name to the address to connect to (null refuses). */
+  resolve?: (host: string) => Promise<string | null>;
+  /** Test seam: open the TCP connection. */
+  connect?: (address: string, port: number, timeout: number) => Socket;
 };
+
+export const defaultMaxStreams = 64;
 
 type WebSocketLike = {
   send(data: Uint8Array): void;
@@ -142,9 +155,15 @@ type WebSocketLike = {
 /** Attach the relay to an accepted WebSocket. */
 export function serveWisp(socket: WebSocketLike, options: RelayOptions) {
   const log = options.log ?? (() => {});
+  const resolve = options.resolve ?? publicAddress;
+  const connect =
+    options.connect ??
+    ((address: string, port: number, timeout: number) =>
+      createConnection({ host: address, port, timeout }));
+  const maxStreams = options.maxStreams ?? defaultMaxStreams;
   const streams = new Map<
     number,
-    { socket: Socket | null; pending: Uint8Array[]; connected: boolean }
+    { socket: Socket | null; pending: Uint8Array[]; connected: boolean; resolving: boolean }
   >();
   const targets = new Map<number, { host: string; port: number }>();
   let relayed = 0;
@@ -167,14 +186,15 @@ export function serveWisp(socket: WebSocketLike, options: RelayOptions) {
     const stream = streams.get(streamId);
     if (!stream) return;
     streams.delete(streamId);
+    targets.delete(streamId);
     stream.socket?.destroy();
     if (notify) send(closePacket(streamId, reason));
   };
 
-  const open = (streamId: number, host: string, port: number) => {
+  const open = (streamId: number, address: string, port: number) => {
     const stream = streams.get(streamId);
     if (!stream) return;
-    const target = createConnection({ host, port, timeout: options.connectTimeoutMs ?? 15_000 });
+    const target = connect(address, port, options.connectTimeoutMs ?? 15_000);
     stream.socket = target;
     target.once("connect", () => {
       stream.connected = true;
@@ -197,6 +217,27 @@ export function serveWisp(socket: WebSocketLike, options: RelayOptions) {
       closeStream(streamId, reason);
     });
     target.on("close", () => closeStream(streamId, closeReasons.voluntary));
+  };
+
+  /** Vet the destination the first bytes name, then connect to its address. */
+  const admit = async (streamId: number, name: string, port: number) => {
+    const stream = streams.get(streamId);
+    if (!stream) return;
+    if (options.allowlist?.length && !hostAllowed(name, options.allowlist)) {
+      log(`blocked ${name}:${port} (not on the allowlist)`);
+      closeStream(streamId, closeReasons.blocked);
+      return;
+    }
+    stream.resolving = true;
+    const address = await resolve(name);
+    if (!streams.has(streamId)) return; // closed while resolving
+    stream.resolving = false;
+    if (!address) {
+      log(`blocked ${name}:${port} (not a public host)`);
+      closeStream(streamId, closeReasons.blocked);
+      return;
+    }
+    open(streamId, address, port);
   };
 
   socket.on("message", (raw, isBinary) => {
@@ -224,9 +265,12 @@ export function serveWisp(socket: WebSocketLike, options: RelayOptions) {
         log(`refused ${connect.streamType === 1 ? "tcp" : "udp"} ${connect.host}:${connect.port}`);
         return send(closePacket(streamId, closeReasons.blocked));
       }
+      if (streams.size >= maxStreams) {
+        log(`throttled ${connect.host}:${connect.port} (${streams.size} streams open)`);
+        return send(closePacket(streamId, closeReasons.throttled));
+      }
       // Hold the connection until the first bytes reveal the real destination.
-      streams.set(streamId, { socket: null, pending: [], connected: false });
-      // Store the requested target on the stream record for the data phase.
+      streams.set(streamId, { socket: null, pending: [], connected: false, resolving: false });
       targets.set(streamId, { host: connect.host, port: connect.port });
       send(continuePacket(streamId, bufferSize));
       return;
@@ -241,7 +285,7 @@ export function serveWisp(socket: WebSocketLike, options: RelayOptions) {
         return;
       }
       stream.pending.push(new Uint8Array(payload));
-      if (stream.socket) return; // connecting; data queued
+      if (stream.socket || stream.resolving) return; // connecting; data queued
       const head = Buffer.concat(stream.pending);
       const name =
         target.port === 443 ? serverNameFromClientHello(head) : hostFromHttpRequest(head);
@@ -249,19 +293,18 @@ export function serveWisp(socket: WebSocketLike, options: RelayOptions) {
         if (head.length > 16_384) closeStream(streamId, closeReasons.blocked);
         return;
       }
-      if (!name || !hostAllowed(name, options.allowlist)) {
-        log(`blocked ${name ?? "(unknown)"}:${target.port}`);
+      if (!name) {
+        log(`blocked (unnamed):${target.port}`);
         closeStream(streamId, closeReasons.blocked);
         return;
       }
       // Connect to the name the client actually spoke to, not the raw target,
-      // so an IP from the sandbox's own DNS cannot point the allowlisted name elsewhere.
-      open(streamId, name, target.port);
+      // so an IP from the sandbox's own DNS cannot point a name elsewhere.
+      void admit(streamId, name, target.port);
       return;
     }
     if (type === CLOSE) {
       closeStream(streamId, closeReasons.voluntary, false);
-      targets.delete(streamId);
     }
   });
   socket.on("close", () => {
@@ -276,25 +319,3 @@ export function serveWisp(socket: WebSocketLike, options: RelayOptions) {
   // Initial flow-control window.
   send(continuePacket(0, bufferSize));
 }
-
-export const defaultAllowlist = [
-  "registry.npmjs.org",
-  "registry.yarnpkg.com",
-  "*.npmjs.org",
-  "github.com",
-  "*.github.com",
-  "*.githubusercontent.com",
-  "esm.sh",
-  "cdn.jsdelivr.net",
-  "data.jsdelivr.com",
-  "unpkg.com",
-  "cdn.tailwindcss.com",
-  "pypi.org",
-  "files.pythonhosted.org",
-  "python-registry.wasmer.app",
-  "registry.wasmer.io",
-  "deno.land",
-  "jsr.io",
-  "crates.io",
-  "static.crates.io",
-];
