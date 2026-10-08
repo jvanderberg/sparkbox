@@ -33,6 +33,8 @@ coverage/
 .cache/
 .pnpm-store/
 .sparkbox/
+.scratch/
+*.log
 `;
 
 const decoder = new TextDecoder();

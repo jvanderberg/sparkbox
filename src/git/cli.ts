@@ -294,9 +294,13 @@ export async function runGitCommand(repo: Repository, argv: string[]): Promise<C
       case "reset": {
         if (flags.has("hard")) {
           const ref = positional[0] ?? "HEAD";
-          await repo.checkout(ref, { force: true });
           const branch = await repo.currentBranch();
-          if (ref !== "HEAD" && ref !== branch) await repo.checkout(branch, { force: true });
+          if (ref !== "HEAD" && ref !== branch)
+            return fatal(
+              "reset --hard to another commit is not available here. Use git checkout <branch>, or git restore <paths> to discard edits.",
+            );
+          // Re-checking out the branch itself keeps HEAD attached to it.
+          await repo.checkout(branch, { force: true });
           const head = await repo.head();
           return ok(`HEAD is now at ${head ? shortSha(head) : "?"}\n`);
         }
@@ -331,9 +335,13 @@ export async function runGitCommand(repo: Repository, argv: string[]): Promise<C
         );
       }
       case "fetch":
+        if ((await repo.currentBranch()) === "(detached)")
+          return fatal("HEAD is detached. Run git checkout main first.");
         await repo.fetch();
         return ok();
       case "pull": {
+        if ((await repo.currentBranch()) === "(detached)")
+          return fatal("HEAD is detached. Run git checkout main first.");
         await repo.pull();
         const head = await repo.head();
         return ok(`Already up to date or merged. HEAD is now at ${head ? shortSha(head) : "?"}\n`);
@@ -343,7 +351,13 @@ export async function runGitCommand(repo: Repository, argv: string[]): Promise<C
           return fatal(
             'no remote: ask the user to click "Back up to GitHub" in the header, which creates the repository and sets origin.',
           );
-        await repo.push({ force: flags.has("f") || flags.has("force") });
+        if (flags.has("f") || flags.has("force") || flags.has("force-with-lease"))
+          return fatal(
+            "force pushes are not available here: they would discard commits on GitHub. Run git pull (which merges), resolve anything it reports, then git push.",
+          );
+        if ((await repo.currentBranch()) === "(detached)")
+          return fatal("HEAD is detached. Run git checkout main first.");
+        await repo.push();
         const branch = await repo.currentBranch();
         return ok(`Pushed ${branch} to origin.\n`);
       }

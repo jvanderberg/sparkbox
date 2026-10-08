@@ -129,6 +129,13 @@ describe("git command", () => {
     expect((await run("branch")).stdout).toBe("  main\n* topic\n");
     expect((await run("rev-parse --abbrev-ref HEAD")).stdout).toBe("topic\n");
     expect((await run("push")).stderr).toContain("Back up to GitHub");
+    await repo.setRemote("https://github.com/ada/demo.git");
+    expect((await run("push --force")).stderr).toContain("force pushes are not available");
+    await sandbox.writeFile("PROJECT.md", "scratch\n");
+    expect((await run("reset --hard")).stdout).toMatch(/^HEAD is now at [0-9a-f]{7}/);
+    expect(await sandbox.readText("PROJECT.md")).toBe("# Demo\nMore\n");
+    expect((await run("rev-parse --abbrev-ref HEAD")).stdout).toBe("topic\n");
+    expect((await run("reset --hard main")).stderr).toContain("not available here");
     expect((await run("stash")).code).toBe(128);
     expect((await run("frobnicate")).stderr).toContain("not a git command Sparkbox supports");
     expect((await run("--version")).stdout).toContain("isomorphic-git");

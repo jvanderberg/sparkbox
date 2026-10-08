@@ -215,6 +215,10 @@ export class WasmerSandbox implements Sandbox {
         // published less than a day ago are not resolved, so a lockfile made
         // here installs cleanly when GitHub Actions builds the site.
         npm_config_minimum_release_age: "1440",
+        // Dependency build scripts cannot run here (spawn is ENOSYS), and
+        // GitHub's build installs the same way, so esbuild and friends rely on
+        // their platform packages instead of a postinstall.
+        npm_config_ignore_scripts: "true",
       },
       network: wispUrl ? { mode: "wisp", url: wispUrl } : { mode: "http" },
       onPackageProgress: (progress) => {

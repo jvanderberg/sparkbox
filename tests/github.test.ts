@@ -40,7 +40,8 @@ describe("projectKind and publishFiles", () => {
     });
     expect(vite.kind).toBe("vite");
     const workflow = new TextDecoder().decode(vite.added[workflowPath]);
-    expect(workflow).toContain("pnpm install");
+    expect(workflow).toContain("npm install -g pnpm@10");
+    expect(workflow).toContain("pnpm install --ignore-scripts");
     // biome-ignore lint/suspicious/noTemplateCurlyInString: an Actions expression, not a template
     expect(workflow).toContain("--base=/${{ github.event.repository.name }}/");
     expect(workflow).toContain("actions/deploy-pages@v4");
@@ -50,7 +51,22 @@ describe("projectKind and publishFiles", () => {
     expect(
       Object.keys(publishFiles({ "index.html": text(""), ".nojekyll": text("") }).added),
     ).toEqual([]);
-    expect(pagesWorkflow({ pnpm: false })).toContain("npm install");
+    expect(pagesWorkflow({ pnpm: false })).toContain("npm install --ignore-scripts");
+  });
+  it("refreshes a workflow Sparkbox wrote and leaves an edited one alone", () => {
+    const manifest = text('{"devDependencies":{"vite":"^7"}}');
+    const stale = text("# Written by Sparkbox. Builds the app\nname: old\n");
+    expect(
+      Object.keys(publishFiles({ "package.json": manifest, [workflowPath]: stale }).added),
+    ).toEqual([workflowPath]);
+    const edited = text("name: mine\n");
+    expect(
+      Object.keys(publishFiles({ "package.json": manifest, [workflowPath]: edited }).added),
+    ).toEqual([]);
+    const current = text(pagesWorkflow({ pnpm: false }));
+    expect(
+      Object.keys(publishFiles({ "package.json": manifest, [workflowPath]: current }).added),
+    ).toEqual([]);
   });
 });
 

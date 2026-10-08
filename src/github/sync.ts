@@ -8,6 +8,7 @@ import type { GitHubClient, Repository } from "./api.ts";
 import { type ProjectKind, pagesWorkflow, projectKind, workflowPath } from "./git.ts";
 
 const encoder = new TextEncoder();
+const decoder = new TextDecoder();
 
 /** How a project is tied to a repository. Lives in localStorage per project. */
 export type GitHubLink = Repository & {
@@ -33,10 +34,11 @@ export function publishFiles(current: FileMap): { kind: ProjectKind; added: File
   const kind = projectKind(current);
   const added: FileMap = {};
   if (kind === "vite") {
-    if (!current[workflowPath])
-      added[workflowPath] = encoder.encode(
-        pagesWorkflow({ pnpm: Boolean(current["pnpm-lock.yaml"]) }),
-      );
+    const workflow = pagesWorkflow({ pnpm: Boolean(current["pnpm-lock.yaml"]) });
+    const existing = current[workflowPath] ? decoder.decode(current[workflowPath]) : "";
+    // Sparkbox's own workflow is kept current; one the user edited is left alone.
+    if (!existing || (existing.startsWith("# Written by Sparkbox") && existing !== workflow))
+      added[workflowPath] = encoder.encode(workflow);
   } else if (!current[".nojekyll"]) added[".nojekyll"] = new Uint8Array();
   return { kind, added };
 }

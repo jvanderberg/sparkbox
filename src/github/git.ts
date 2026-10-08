@@ -54,10 +54,14 @@ export const workflowPath = ".github/workflows/pages.yml";
 
 /** The Actions workflow that builds a Vite project and deploys it to Pages. */
 export function pagesWorkflow(options: { pnpm: boolean }): string {
+  // The sandbox installs with pnpm 10 and never runs build scripts (its
+  // runtime cannot spawn them); the runner does the same, so the lockfile
+  // and the policies match. Newer pnpm fails outright on esbuild's ignored
+  // postinstall, and esbuild works without it through its platform package.
   const install = options.pnpm
-    ? `      - run: npm install -g pnpm
-      - run: pnpm install`
-    : `      - run: npm install`;
+    ? `      - run: npm install -g pnpm@10
+      - run: pnpm install --ignore-scripts`
+    : `      - run: npm install --ignore-scripts`;
   return `# Written by Sparkbox. Builds the app and publishes it to GitHub Pages on every push.
 name: Publish to GitHub Pages
 on:
