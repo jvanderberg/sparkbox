@@ -130,8 +130,10 @@ export type RelayOptions = {
   byteBudget: number;
   onBytes?: (count: number) => void;
   connectTimeoutMs?: number;
-  /** Streams open at once on this connection (default 64). */
+  /** Streams open at once on this connection (default 256). */
   maxStreams?: number;
+  /** How long a stream may wait for its first bytes or its address (default 30 s). */
+  pendingTimeoutMs?: number;
   log?: (message: string) => void;
   /** Test seam: resolve a name to the address to connect to (null refuses). */
   resolve?: (host: string) => Promise<string | null>;
@@ -139,7 +141,7 @@ export type RelayOptions = {
   connect?: (address: string, port: number, timeout: number) => Socket;
 };
 
-export const defaultMaxStreams = 64;
+export const defaultMaxStreams = 256;
 
 type WebSocketLike = {
   send(data: Uint8Array): void;
@@ -161,10 +163,19 @@ export function serveWisp(socket: WebSocketLike, options: RelayOptions) {
     ((address: string, port: number, timeout: number) =>
       createConnection({ host: address, port, timeout }));
   const maxStreams = options.maxStreams ?? defaultMaxStreams;
+  const pendingTimeoutMs = options.pendingTimeoutMs ?? 30_000;
   const streams = new Map<
     number,
-    { socket: Socket | null; pending: Uint8Array[]; connected: boolean; resolving: boolean }
+    {
+      socket: Socket | null;
+      pending: Uint8Array[];
+      connected: boolean;
+      resolving: boolean;
+      /** Closes the stream if it never names a destination the relay can reach. */
+      pendingTimer: NodeJS.Timeout;
+    }
   >();
+  let lastThrottleLog = 0;
   const targets = new Map<number, { host: string; port: number }>();
   let relayed = 0;
   const send = (packet: Uint8Array) => {
@@ -187,6 +198,7 @@ export function serveWisp(socket: WebSocketLike, options: RelayOptions) {
     if (!stream) return;
     streams.delete(streamId);
     targets.delete(streamId);
+    clearTimeout(stream.pendingTimer);
     stream.socket?.destroy();
     if (notify) send(closePacket(streamId, reason));
   };
@@ -197,6 +209,7 @@ export function serveWisp(socket: WebSocketLike, options: RelayOptions) {
     const target = connect(address, port, options.connectTimeoutMs ?? 15_000);
     stream.socket = target;
     target.once("connect", () => {
+      clearTimeout(stream.pendingTimer);
       stream.connected = true;
       for (const chunk of stream.pending) target.write(chunk);
       stream.pending = [];
@@ -266,11 +279,24 @@ export function serveWisp(socket: WebSocketLike, options: RelayOptions) {
         return send(closePacket(streamId, closeReasons.blocked));
       }
       if (streams.size >= maxStreams) {
-        log(`throttled ${connect.host}:${connect.port} (${streams.size} streams open)`);
+        if (Date.now() - lastThrottleLog > 10_000) {
+          lastThrottleLog = Date.now();
+          log(`throttled ${connect.host}:${connect.port} (${streams.size} streams open)`);
+        }
         return send(closePacket(streamId, closeReasons.throttled));
       }
       // Hold the connection until the first bytes reveal the real destination.
-      streams.set(streamId, { socket: null, pending: [], connected: false, resolving: false });
+      // A stream that never gets that far, or whose connection never
+      // completes, is dropped so it cannot pin a slot forever.
+      streams.set(streamId, {
+        socket: null,
+        pending: [],
+        connected: false,
+        resolving: false,
+        pendingTimer: setTimeout(() => {
+          if (streams.has(streamId)) closeStream(streamId, closeReasons.timeout);
+        }, pendingTimeoutMs),
+      });
       targets.set(streamId, { host: connect.host, port: connect.port });
       send(continuePacket(streamId, bufferSize));
       return;

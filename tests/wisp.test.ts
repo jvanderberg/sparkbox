@@ -162,6 +162,15 @@ describe("relay admission", () => {
     expect(closed[0]?.payload[0]).toBe(closeReasons.throttled);
   });
 
+  it("drops a stream that never names a destination", async () => {
+    const socket = fakeSocket();
+    relay(socket, { pendingTimeoutMs: 20 });
+    socket.message(connectPacket(1, "public.test"));
+    expect(socket.sent.some((p) => p.type === CLOSE)).toBe(false);
+    await until(() => socket.sent.some((p) => p.type === CLOSE && p.streamId === 1));
+    expect(socket.sent.find((p) => p.type === CLOSE)?.payload[0]).toBe(closeReasons.timeout);
+  });
+
   it("connects to the resolved address and relays bytes both ways", async () => {
     const server = createServer((connection) => {
       connection.on("data", (chunk) => connection.end(`echo:${chunk}`));
