@@ -346,6 +346,21 @@ export function usePreview(sandbox: WasmerSandbox | null, origin: string) {
               timeoutMs: 10 * 60_000,
               onOutput: append,
             });
+            if (
+              result.exitCode !== 0 &&
+              /MINIMUM_RELEASE_AGE/.test(result.stdout + result.stderr)
+            ) {
+              // The lockfile names packages younger than the supply-chain
+              // policy allows (resolved before the policy applied here):
+              // resolve again under the policy rather than fail.
+              append(
+                "\nThe lockfile names packages published less than a day ago, which the supply-chain policy refuses. Resolving again under the policy…\n",
+              );
+              result = await sandbox.exec(`rm -f pnpm-lock.yaml && ${installCommand}`, {
+                timeoutMs: 10 * 60_000,
+                onOutput: append,
+              });
+            }
           } finally {
             setInstalling(false);
           }

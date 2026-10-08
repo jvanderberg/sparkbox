@@ -211,6 +211,10 @@ export class WasmerSandbox implements Sandbox {
         TERM: "xterm-256color",
         CI: "1",
         npm_config_update_notifier: "false",
+        // pnpm's supply-chain policy, as GitHub's runners apply it: packages
+        // published less than a day ago are not resolved, so a lockfile made
+        // here installs cleanly when GitHub Actions builds the site.
+        npm_config_minimum_release_age: "1440",
       },
       network: wispUrl ? { mode: "wisp", url: wispUrl } : { mode: "http" },
       onPackageProgress: (progress) => {
