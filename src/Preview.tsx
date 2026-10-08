@@ -1,11 +1,28 @@
 import type { Process } from "@wasmer/sdk/browser";
-import { Maximize2, Minimize2, Play, ScrollText, Square } from "lucide-react";
+import {
+  Maximize2,
+  Minimize2,
+  Play,
+  RefreshCw,
+  RotateCcw,
+  ScrollText,
+  Settings2,
+  Square,
+} from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import {
+  defaultPreviewConfig,
+  defaultPreviewPort,
+  type PreviewConfig,
+  readPreviewConfig,
+  writePreviewConfig,
+} from "./preview-config.ts";
 import { serveScript } from "./sandbox/serve-script.ts";
 import type { WasmerSandbox } from "./sandbox/wasmer.ts";
+import { wsBridgeScript } from "./sandbox/ws-bridge-script.ts";
 import "./preview.css";
 
-export const previewPort = 8080;
+export const previewPort = defaultPreviewPort;
 
 /** Where the preview iframe loads from. Must be a different origin than the app. */
 export function defaultPreviewOrigin() {
@@ -20,6 +37,9 @@ export function defaultPreviewOrigin() {
   return "";
 }
 
+type Tunnel = { write: (line: string) => Promise<void>; kill: () => Promise<void> };
+type TunnelRoute = { source: Window; origin: string; pageId: number };
+
 export function usePreview(sandbox: WasmerSandbox | null, origin: string) {
   const [url, setUrl] = useState("");
   const [running, setRunning] = useState(false);
@@ -28,13 +48,22 @@ export function usePreview(sandbox: WasmerSandbox | null, origin: string) {
   const [error, setError] = useState("");
   const [ports, setPorts] = useState<number[]>([]);
   const [pageErrors, setPageErrors] = useState<string[]>([]);
+  const [config, setConfig] = useState<PreviewConfig>(defaultPreviewConfig);
   const pageErrorsRef = useRef<string[]>([]);
   pageErrorsRef.current = pageErrors;
+  const logsRef = useRef("");
+  logsRef.current = logs;
   const process = useRef<Process | null>(null);
   const closeServer = useRef<(() => Promise<void>) | null>(null);
+  const frame = useRef<HTMLIFrameElement | null>(null);
+  const tunnel = useRef<Tunnel | null>(null);
+  const routes = useRef(new Map<number, TunnelRoute>());
+  const pageIds = useRef(new Map<Window, Map<number, number>>());
+  const nextRoute = useRef(1);
 
   useEffect(() => {
     if (!sandbox) return;
+    void readPreviewConfig(sandbox).then(setConfig);
     return sandbox.onListen(
       (port) => setPorts((known) => (known.includes(port) ? known : [...known, port])),
       (port) => setPorts((known) => known.filter((entry) => entry !== port)),
@@ -48,6 +77,9 @@ export function usePreview(sandbox: WasmerSandbox | null, origin: string) {
     return sandbox.onRestart(() => {
       process.current = null;
       closeServer.current = null;
+      tunnel.current = null;
+      routes.current.clear();
+      pageIds.current.clear();
       setUrl("");
       setRunning(false);
       setPorts([]);
@@ -55,7 +87,44 @@ export function usePreview(sandbox: WasmerSandbox | null, origin: string) {
     });
   }, [sandbox]);
 
-  // Errors reported by the page through the injected reporter script.
+  /** The bridge process that holds real sockets inside the sandbox. */
+  async function ensureTunnel(): Promise<Tunnel | null> {
+    if (!sandbox) return null;
+    if (tunnel.current) return tunnel.current;
+    const started = await sandbox.startPipe(
+      "node .sparkbox/ws-bridge.mjs",
+      (line) => {
+        let message: { op?: string; id?: number } & Record<string, unknown>;
+        try {
+          message = JSON.parse(line);
+        } catch {
+          return;
+        }
+        if (typeof message.id !== "number") return;
+        const route = routes.current.get(message.id);
+        if (!route) return;
+        route.source.postMessage(
+          { ...message, type: "sparkbox:ws", id: route.pageId },
+          route.origin,
+        );
+        if (message.op === "close" || message.op === "error") {
+          if (message.op === "close") {
+            routes.current.delete(message.id);
+            pageIds.current.get(route.source)?.delete(route.pageId);
+          }
+        }
+      },
+      () => {
+        tunnel.current = null;
+        routes.current.clear();
+        pageIds.current.clear();
+      },
+    );
+    tunnel.current = started;
+    return started;
+  }
+
+  // Messages from preview pages: error reports and tunnelled sockets.
   useEffect(() => {
     if (!origin) return;
     let expected = "";
@@ -65,18 +134,70 @@ export function usePreview(sandbox: WasmerSandbox | null, origin: string) {
       return;
     }
     const listener = (event: MessageEvent) => {
-      if (event.origin !== expected) return;
+      if (event.origin !== expected || !event.source || !("postMessage" in event.source)) return;
       const data = event.data as {
         type?: string;
         message?: string;
         href?: string;
         probe?: boolean;
+        op?: string;
+        id?: number;
+        path?: string;
+        protocols?: string[];
+        text?: string;
+        base64?: string;
+        code?: number;
+        reason?: string;
       } | null;
-      if (data?.type !== "sparkbox:page-error" || typeof data.message !== "string") return;
-      // Hidden probe frames belong to the agent's preview tool, not the user's view.
-      if (data.probe) return;
-      const line = `${data.href && data.href !== "/" ? `${data.href}: ` : ""}${data.message}`;
-      setPageErrors((previous) => [...previous.slice(-49), line]);
+      if (!data) return;
+      if (data.type === "sparkbox:page-error" && typeof data.message === "string") {
+        // Hidden probe frames belong to the agent's preview tool, not the user's view.
+        if (data.probe) return;
+        const line = `${data.href && data.href !== "/" ? `${data.href}: ` : ""}${data.message}`;
+        setPageErrors((previous) => [...previous.slice(-49), line]);
+        return;
+      }
+      if (data.type !== "sparkbox:ws" || typeof data.id !== "number") return;
+      const source = event.source as Window;
+      const pageId = data.id;
+      void (async () => {
+        const pipe = await ensureTunnel();
+        if (!pipe) return;
+        let perPage = pageIds.current.get(source);
+        if (!perPage) {
+          perPage = new Map();
+          pageIds.current.set(source, perPage);
+        }
+        if (data.op === "open") {
+          const routeId = nextRoute.current++;
+          perPage.set(pageId, routeId);
+          routes.current.set(routeId, { source, origin: expected, pageId });
+          await pipe.write(
+            JSON.stringify({
+              op: "open",
+              id: routeId,
+              port: configRef.current.port,
+              path: data.path ?? "/",
+              protocols: data.protocols ?? [],
+            }),
+          );
+          return;
+        }
+        const routeId = perPage.get(pageId);
+        if (routeId === undefined) return;
+        if (data.op === "send")
+          await pipe.write(
+            JSON.stringify(
+              typeof data.text === "string"
+                ? { op: "send", id: routeId, text: data.text }
+                : { op: "send", id: routeId, base64: data.base64 ?? "" },
+            ),
+          );
+        else if (data.op === "close")
+          await pipe.write(
+            JSON.stringify({ op: "close", id: routeId, code: data.code, reason: data.reason }),
+          );
+      })();
     };
     window.addEventListener("message", listener);
     return () => window.removeEventListener("message", listener);
@@ -84,6 +205,8 @@ export function usePreview(sandbox: WasmerSandbox | null, origin: string) {
 
   const urlRef = useRef("");
   urlRef.current = url;
+  const configRef = useRef(config);
+  configRef.current = config;
   const startingRef = useRef<Promise<string> | null>(null);
 
   async function expose(port: number): Promise<string> {
@@ -107,7 +230,7 @@ export function usePreview(sandbox: WasmerSandbox | null, origin: string) {
     }
   }
 
-  /** Start the static server and expose it; resolves with the preview URL. */
+  /** Start the configured command and expose its port; resolves with the preview URL. */
   function start(): Promise<string> {
     if (startingRef.current) return startingRef.current;
     if (!sandbox) return Promise.reject(new Error("The sandbox is not ready."));
@@ -115,11 +238,29 @@ export function usePreview(sandbox: WasmerSandbox | null, origin: string) {
       setStarting(true);
       setError("");
       setLogs("");
+      logsRef.current = "";
       setPageErrors([]);
       try {
+        const current = await readPreviewConfig(sandbox);
+        setConfig(current);
+        configRef.current = current;
         await sandbox.writeFile(".sparkbox/serve.mjs", serveScript);
-        const started = await sandbox.start(`node .sparkbox/serve.mjs ${previewPort}`, (chunk) =>
-          setLogs((text) => (text + chunk).slice(-20_000)),
+        await sandbox.writeFile(".sparkbox/ws-bridge.mjs", wsBridgeScript);
+        let host = "";
+        try {
+          host = new URL(origin).hostname;
+        } catch {
+          host = "";
+        }
+        // Vite (6.0.9+) accepts the preview hostname through this variable; the
+        // rest is the project's own command.
+        const env = host ? `__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS=${host} ` : "";
+        const started = await sandbox.start(`${env}${current.command}`, (chunk) =>
+          setLogs((text) => {
+            const next = (text + chunk).slice(-20_000);
+            logsRef.current = next;
+            return next;
+          }),
         );
         process.current = started.process;
         setRunning(true);
@@ -130,8 +271,8 @@ export function usePreview(sandbox: WasmerSandbox | null, origin: string) {
             if (code !== 0) setError(`The preview server exited with code ${code}.`);
           }
         });
-        await sandbox.waitForPort(previewPort, 60_000);
-        return await expose(previewPort);
+        await sandbox.waitForPort(current.port, 90_000);
+        return await expose(current.port);
       } catch (cause) {
         setError(cause instanceof Error ? cause.message : String(cause));
         throw cause;
@@ -155,9 +296,42 @@ export function usePreview(sandbox: WasmerSandbox | null, origin: string) {
     process.current = null;
     await closeServer.current?.().catch(() => {});
     closeServer.current = null;
+    const pipe = tunnel.current;
+    tunnel.current = null;
+    routes.current.clear();
+    pageIds.current.clear();
+    await pipe?.kill().catch(() => {});
     setUrl("");
+    urlRef.current = "";
     if (current) await current.kill().catch(() => {});
     setRunning(false);
+  }
+
+  async function restart() {
+    await stop();
+    return start();
+  }
+
+  /** Ask the visible page to reload itself. */
+  function reload() {
+    const target = frame.current?.contentWindow;
+    if (!target || !urlRef.current) return;
+    let expected = "";
+    try {
+      expected = new URL(origin).origin;
+    } catch {
+      return;
+    }
+    target.postMessage({ type: "sparkbox:reload" }, expected);
+  }
+
+  async function configure(next: Partial<PreviewConfig>) {
+    if (!sandbox) throw new Error("The sandbox is not ready.");
+    const saved = await writePreviewConfig(sandbox, next);
+    setConfig(saved);
+    configRef.current = saved;
+    if (process.current) await restart();
+    return saved;
   }
 
   return {
@@ -167,13 +341,22 @@ export function usePreview(sandbox: WasmerSandbox | null, origin: string) {
     logs,
     error,
     ports,
+    config,
     pageErrors,
-    /** Stable accessor for the agent's prompt. */
+    /** Stable accessors for the agent's tools. */
     recentPageErrors: () => pageErrorsRef.current,
+    recentLogs: () => logsRef.current,
+    currentConfig: () => configRef.current,
     clearPageErrors: () => setPageErrors([]),
+    setFrame: (element: HTMLIFrameElement | null) => {
+      frame.current = element;
+    },
     start,
     ensureRunning,
     stop,
+    restart,
+    reload,
+    configure,
     expose,
   };
 }
@@ -192,6 +375,7 @@ export function PreviewControls({
   onFullScreen: () => void;
 }) {
   const [logsOpen, setLogsOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   return (
     <div className="preview-controls">
       {preview.running ? (
@@ -225,8 +409,82 @@ export function PreviewControls({
           <Maximize2 size={14} /> Full screen
         </button>
       )}
+      {preview.url && (
+        <button
+          type="button"
+          className="button small"
+          onClick={preview.reload}
+          title="Reload the page"
+        >
+          <RefreshCw size={14} /> Reload
+        </button>
+      )}
+      {preview.running && (
+        <button
+          type="button"
+          className="button small"
+          onClick={() => void preview.restart().catch(() => {})}
+          title="Restart the preview server"
+        >
+          <RotateCcw size={14} /> Restart
+        </button>
+      )}
+      <button
+        type="button"
+        className="button small"
+        aria-expanded={settingsOpen}
+        onClick={() => setSettingsOpen(!settingsOpen)}
+        title="Preview command, port and directory"
+      >
+        <Settings2 size={14} /> Server
+      </button>
+      {settingsOpen && (
+        <form
+          className="preview-settings"
+          aria-label="Preview server settings"
+          onSubmit={(event) => {
+            event.preventDefault();
+            const form = new FormData(event.currentTarget);
+            void preview
+              .configure({
+                command: String(form.get("command") ?? ""),
+                port: Number(form.get("port") ?? previewPort) || previewPort,
+                directory: String(form.get("directory") ?? "."),
+              })
+              .then(() => setSettingsOpen(false))
+              .catch(() => {});
+          }}
+        >
+          <label>
+            Command
+            <input name="command" defaultValue={preview.config.command} autoComplete="off" />
+          </label>
+          <label>
+            Port
+            <input
+              name="port"
+              type="number"
+              min={1}
+              max={65535}
+              defaultValue={preview.config.port}
+            />
+          </label>
+          <label>
+            Directory (static server)
+            <input name="directory" defaultValue={preview.config.directory} autoComplete="off" />
+          </label>
+          <p>
+            Saved to sparkbox.json in the project. The default serves the project as static files
+            with live reload; a Vite project uses its dev server, for example
+            <code> npm run dev -- --host 0.0.0.0 --port 5173</code> with port 5173.
+          </p>
+          <button type="submit" className="button small primary">
+            Save and restart
+          </button>
+        </form>
+      )}
       {preview.ports
-        .filter((port) => port !== previewPort || !preview.url)
+        .filter((port) => port !== preview.config.port || !preview.url)
         .map((port) => (
           <button
             key={port}
@@ -302,6 +560,7 @@ export function PreviewPanel({
       )}
       {preview.url ? (
         <iframe
+          ref={preview.setFrame}
           className="preview-frame"
           title="App preview"
           src={preview.url}

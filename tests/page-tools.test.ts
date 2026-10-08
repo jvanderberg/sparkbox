@@ -43,6 +43,18 @@ describe("preview tool", () => {
       requests,
       ensureRunning: async () => "http://localhost:4320/",
       recentErrors: () => ["TypeError: boom (/app.js:3)"],
+      logs: () => "Serving /workspace on port 8080",
+      configure: async (config) => ({
+        command: config.command ?? "node .sparkbox/serve.mjs 8080 .",
+        port: config.port ?? 8080,
+        directory: config.directory ?? ".",
+      }),
+      status: () => ({
+        config: { command: "node .sparkbox/serve.mjs 8080 .", port: 8080, directory: "." },
+        running: true,
+        url: "http://localhost:4320/",
+      }),
+      restart: async () => "http://localhost:4320/",
       query: async (request) => {
         requests.push(request);
         switch (request.format) {
@@ -85,6 +97,21 @@ describe("preview tool", () => {
     const errors = await previewTool(preview, { format: "errors", viewport: "desktop" });
     expect(errors.output).toContain("fresh load of / at desktop size: none");
     expect(errors.output).toContain("TypeError: boom");
+  });
+  it("reports status, logs and configure results", async () => {
+    const preview = controller();
+    expect((await previewTool(preview, { format: "status" })).output).toMatch(
+      /running at http:\/\/localhost:4320\/.*port 8080/,
+    );
+    expect((await previewTool(preview, { format: "logs" })).output).toContain("Serving /workspace");
+    const configured = await previewTool(preview, {
+      format: "configure",
+      command: "npm run dev",
+      port: 5173,
+    });
+    expect(configured.error).toBeUndefined();
+    expect(configured.output).toContain("Saved sparkbox.json");
+    expect((await previewTool(preview, { format: "configure" })).error).toBe(true);
   });
   it("fails clearly without a controller", async () => {
     const result = await previewTool(undefined, { format: "text" });

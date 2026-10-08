@@ -148,6 +148,21 @@ async function run(label: string, options: { mobile?: boolean; dark?: boolean })
   }
   await page.screenshot({ path: `artifacts/smoke-${label}-preview.png` });
   await page.getByRole("button", { name: "Clear page errors" }).click();
+  // Live reload: a file written through the sandbox shows up in the frame on its own.
+  await page.evaluate(
+    ([title]) =>
+      (
+        window as unknown as { sparkboxWrite: (p: string, c: string) => Promise<void> }
+      ).sparkboxWrite(
+        "index.html",
+        `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title><link rel="stylesheet" href="./styles.css"></head><body><main><h1>Reloaded ${title}</h1><button id="count" type="button">Clicked 0 times</button></main><script type="module" src="./app.js"></script></body></html>`,
+      ),
+    [`Smoke ${label}`],
+  );
+  await content
+    .getByRole("heading", { name: `Reloaded Smoke ${label}` })
+    .waitFor({ timeout: 15_000 });
+  console.log(`${label} live reload ok`);
   // The agent's preview tool: a text outline, the error list and a phone screenshot
   // captured through hidden probe frames.
   const tool = await page.evaluate(async () => {
@@ -179,7 +194,7 @@ async function run(label: string, options: { mobile?: boolean; dark?: boolean })
   });
   console.log(`${label} preview tool:`, JSON.stringify({ ...tool, text: tool.text.slice(0, 120) }));
   if (
-    !tool.text.includes(`# Smoke ${label}`) ||
+    !tool.text.includes(`# Reloaded Smoke ${label}`) ||
     !tool.text.includes("[button] Clicked") ||
     !tool.text.includes("Color scheme: dark (forced)")
   )
@@ -196,7 +211,10 @@ async function run(label: string, options: { mobile?: boolean; dark?: boolean })
   await page.locator(".monaco-editor").first().waitFor({ timeout: 30_000 });
   await page.screenshot({ path: `artifacts/smoke-${label}-editor.png` });
   await tabs.getByRole("button", { name: "Changes" }).click();
-  await page.getByText("No changes since the saved version").waitFor({ timeout: 20_000 });
+  // The live-reload edit above is the one change since the saved version.
+  await page
+    .locator(".file-diff summary code", { hasText: "index.html" })
+    .waitFor({ timeout: 20_000 });
   await context.close();
   await browser.close();
   const real = errors.filter((text) => !/favicon|DevTools|smoke page error/.test(text));

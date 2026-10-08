@@ -252,16 +252,30 @@ function ProjectSession({
     ensureRunning: () => previewRef.current.ensureRunning(),
     query: async (request) => queryPreview(await previewRef.current.ensureRunning(), request),
     recentErrors: () => previewRef.current.recentPageErrors(),
+    logs: () => previewRef.current.recentLogs(),
+    configure: (config) => previewRef.current.configure(config),
+    status: () => ({
+      config: previewRef.current.currentConfig(),
+      running: previewRef.current.running,
+      url: previewRef.current.url,
+    }),
+    restart: () => previewRef.current.restart(),
   }));
   useEffect(() => {
     // Exposed for browser checks; it is the same object the agent uses.
-    const globals = window as unknown as { sparkboxPreviewTool?: unknown; sparkboxExec?: unknown };
+    const globals = window as unknown as {
+      sparkboxPreviewTool?: unknown;
+      sparkboxExec?: unknown;
+      sparkboxWrite?: unknown;
+    };
     globals.sparkboxPreviewTool = (request: Parameters<PreviewController["query"]>[0]) =>
       controller.query(request);
     globals.sparkboxExec = (command: string) => sandbox?.exec(command, { timeoutMs: 180_000 });
+    globals.sparkboxWrite = (path: string, content: string) => sandbox?.writeFile(path, content);
     return () => {
       globals.sparkboxPreviewTool = undefined;
       globals.sparkboxExec = undefined;
+      globals.sparkboxWrite = undefined;
     };
   }, [controller, sandbox]);
 

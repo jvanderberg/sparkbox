@@ -335,6 +335,39 @@ export class WasmerSandbox implements Sandbox {
     return { process, done };
   }
 
+  /**
+   * Start a line-oriented helper process with stdin open. Used for the
+   * WebSocket bridge: JSON lines in, JSON lines out.
+   */
+  async startPipe(
+    command: string,
+    onLine: (line: string) => void,
+    onExit?: (code: number) => void,
+  ): Promise<{ write: (line: string) => Promise<void>; kill: () => Promise<void> }> {
+    const process = await this.recover(() =>
+      this.handle
+        .shell(command, { cwd: this.root })
+        .spawn({ stdin: "pipe", stdout: "pipe", stderr: "discard" }),
+    );
+    this.processes.add(process);
+    void (async () => {
+      if (!process.stdout) return;
+      for await (const line of process.stdout.lines()) onLine(line);
+    })();
+    void process.wait().then((output) => {
+      this.processes.delete(process);
+      onExit?.(output.exitCode);
+    });
+    return {
+      write: async (line: string) => {
+        await process.stdin?.write(`${line}\n`);
+      },
+      kill: async () => {
+        await process.kill().catch(() => {});
+      },
+    };
+  }
+
   /** Resolve once the guest listens on `port`. */
   waitForPort(port: number, timeoutMs = 60_000) {
     return this.handle.ports.wait(port, { timeoutMs });

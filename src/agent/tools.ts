@@ -1,4 +1,5 @@
 import type { PreviewViewport } from "../preview-bridge.ts";
+import type { PreviewConfig } from "../preview-config.ts";
 import { type Sandbox, workspacePath } from "../sandbox/types.ts";
 import { FILE_LIMIT } from "../workspace/types.ts";
 import { applyUpdate, parseUpdateBody } from "./apply-patch.ts";
@@ -264,14 +265,26 @@ export const pageTools = [
   {
     name: "preview",
     description:
-      "Look at the running app as the user sees it. Starts the preview if needed. format: 'screenshot' (image at the chosen viewport), 'text' (headings, links, buttons, inputs, images, stylesheet status and visible text, plus overflow info), 'html' (current DOM), 'errors' (page errors on a fresh load plus those the user hit). viewport: 'phone' (390x844), 'tablet' (820x1180) or 'desktop' (1280x800). scheme: 'light' or 'dark' to check that color scheme; default is the user's system setting. Screenshots are a close rendering, not a pixel-exact capture; ask the user to paste a screenshot into the chat when exact appearance matters.",
+      "Look at or control the running app. Starts the preview if needed. format: 'screenshot' (image at the chosen viewport), 'text' (headings, links, buttons, inputs, images, stylesheet status and visible text, plus overflow info), 'html' (current DOM), 'errors' (page errors on a fresh load plus those the user hit), 'logs' (the preview server's output), 'status' (current command, port, directory, running state), 'configure' (set the preview command, port and/or directory, saved to sparkbox.json; restarts the server), 'restart'. viewport: 'phone' (390x844), 'tablet' (820x1180) or 'desktop' (1280x800). scheme: 'light' or 'dark' to check that color scheme; default is the user's system setting. Screenshots are a close rendering, not a pixel-exact capture; ask the user to paste a screenshot into the chat when exact appearance matters.",
     parameters: {
       type: "object",
       properties: {
-        format: { type: "string", enum: ["screenshot", "text", "html", "errors"] },
+        format: {
+          type: "string",
+          enum: ["screenshot", "text", "html", "errors", "logs", "status", "configure", "restart"],
+        },
         viewport: { type: "string", enum: ["phone", "tablet", "desktop"] },
         scheme: { type: "string", enum: ["light", "dark"] },
         path: { type: "string", description: "Page path to open, default /" },
+        command: {
+          type: "string",
+          description: "For configure: the shell command that serves the app (runs in /workspace)",
+        },
+        port: { type: "number", description: "For configure: the port that command listens on" },
+        directory: {
+          type: "string",
+          description: "For configure: the directory the built-in static server serves (default .)",
+        },
       },
       required: ["format"],
       additionalProperties: false,
@@ -346,11 +359,47 @@ export async function previewTool(
       ? (args.scheme as "light" | "dark")
       : undefined;
   const schemeNote = scheme ? `${scheme} scheme (forced)` : "the user's system color scheme";
+  const describe = (status: ReturnType<PreviewController["status"]>) =>
+    `Preview ${status.running ? `running at ${status.url || "(exposing…)"}` : "not running"}. Command: ${status.config.command}; port ${status.config.port}; static directory ${status.config.directory}.`;
+  if (format === "status") return { output: describe(controller.status()) };
+  if (format === "logs")
+    return { output: truncate(controller.logs() || "(no output yet)", 20_000) };
+  if (format === "configure") {
+    const next: Partial<PreviewConfig> = {};
+    if (typeof args.command === "string" && args.command.trim()) next.command = args.command;
+    if (typeof args.port === "number" && args.port > 0) next.port = Math.floor(args.port);
+    if (typeof args.directory === "string" && args.directory.trim())
+      next.directory = args.directory;
+    if (!Object.keys(next).length)
+      return { output: "configure needs a command, port or directory.", error: true };
+    try {
+      await controller.configure(next);
+      return { output: `Saved sparkbox.json. ${describe(controller.status())}` };
+    } catch (error) {
+      return {
+        output: `Could not apply the preview settings: ${error instanceof Error ? error.message : String(error)}\nServer output:\n${truncate(controller.logs(), 4000)}`,
+        error: true,
+      };
+    }
+  }
+  if (format === "restart") {
+    try {
+      await controller.restart();
+      return {
+        output: `Restarted. ${describe(controller.status())}\nRecent output:\n${truncate(controller.logs(), 4000)}`,
+      };
+    } catch (error) {
+      return {
+        output: `The preview did not come back: ${error instanceof Error ? error.message : String(error)}\nOutput:\n${truncate(controller.logs(), 4000)}`,
+        error: true,
+      };
+    }
+  }
   try {
     await controller.ensureRunning();
   } catch (error) {
     return {
-      output: `The preview could not start: ${error instanceof Error ? error.message : String(error)}`,
+      output: `The preview could not start: ${error instanceof Error ? error.message : String(error)}\nServer output:\n${truncate(controller.logs(), 4000)}`,
       error: true,
     };
   }

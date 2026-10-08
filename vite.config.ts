@@ -4,6 +4,7 @@ import { dirname, join, relative, resolve, sep } from "node:path";
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig, type Plugin } from "vite";
+import { bridgeScript } from "./src/sandbox/bridge-script.ts";
 
 // The Wasmer sandbox runs WASIX processes in workers backed by SharedArrayBuffer,
 // which browsers only allow on cross-origin-isolated pages. Static hosts that
@@ -34,6 +35,34 @@ function patchServiceWorker(source: string) {
     if (!source.includes(from)) throw new Error(`service worker patch anchor missing: ${from}`);
     source = source.replace(from, to);
   };
+  // 3. Serve the page bridge at /__sparkbox/bridge.js and inject it into
+  //    every HTML response from the guest, whichever server produced it.
+  replace(
+    "event.respondWith((async () => {\n        const route = activeRoute ?? await recoverRoute();",
+    'if (url.pathname === "/__sparkbox/bridge.js") {\n        event.respondWith(new Response(SPARKBOX_BRIDGE, { headers: { "content-type": "text/javascript; charset=utf-8", "cache-control": "no-store", "cross-origin-resource-policy": "cross-origin" } }));\n        return;\n    }\n    event.respondWith((async () => {\n        const route = activeRoute ?? await recoverRoute();',
+  );
+  replace(
+    "    pending.resolve(new Response(bodyAllowed ? body : null, {",
+    '    const injected = bodyAllowed && body && /^text\\/html/i.test(headers.get("content-type") ?? "") ? injectBridge(body, headers) : body;\n    pending.resolve(new Response(bodyAllowed ? injected : null, {',
+  );
+  source = `${source}
+const SPARKBOX_BRIDGE = ${JSON.stringify(bridgeScript)};
+const SPARKBOX_TAG = '<script src="/__sparkbox/bridge.js"></script>';
+function injectBridge(body, headers) {
+    const text = new TextDecoder().decode(body);
+    const head = text.search(/<head[^>]*>/i);
+    let out;
+    if (head >= 0) {
+        const after = head + text.slice(head).indexOf(">") + 1;
+        out = text.slice(0, after) + SPARKBOX_TAG + text.slice(after);
+    } else {
+        const bodyEnd = text.search(/<\\/body>/i);
+        out = bodyEnd >= 0 ? text.slice(0, bodyEnd) + SPARKBOX_TAG + text.slice(bodyEnd) : SPARKBOX_TAG + text;
+    }
+    headers.delete("content-length");
+    return new TextEncoder().encode(out).buffer;
+}
+`;
   replace(
     'if (url.pathname.startsWith("/.wasmer/"))\n        return;',
     'if (url.origin !== self.location.origin || url.pathname.startsWith("/.wasmer/"))\n        return;',

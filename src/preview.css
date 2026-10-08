@@ -116,3 +116,40 @@
 .workspace-screen.preview-full .preview-error {
   padding-right: 200px;
 }
+.preview-settings {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 8px;
+  z-index: 20;
+  width: min(520px, calc(100vw - 16px));
+  display: grid;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--app-border);
+  border-radius: 10px;
+  background: var(--app-surface);
+  color: var(--app-text);
+  box-shadow: 0 12px 32px rgb(0 0 0 / 0.25);
+  font-size: 13px;
+}
+.preview-settings label {
+  display: grid;
+  gap: 4px;
+}
+.preview-settings input {
+  font: inherit;
+  font-size: 16px;
+  min-height: 40px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--app-border);
+  background: var(--app-input);
+  color: var(--app-text);
+}
+.preview-settings p {
+  margin: 0;
+  color: var(--app-muted);
+}
+.preview-settings code {
+  font-size: 12px;
+}
