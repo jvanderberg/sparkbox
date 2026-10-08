@@ -1,5 +1,6 @@
 import type { AgentImage } from "../../agents/images.ts";
 import type { Sandbox } from "../../sandbox/types.ts";
+import type { GitHubController } from "../github-controller.ts";
 import type { PreviewController } from "../preview-controller.ts";
 
 export type ProviderId = "sparkbox" | "anthropic" | "openai" | "openrouter";
@@ -71,6 +72,7 @@ export type TurnContext = {
   system: string;
   sink: TurnSink;
   preview?: PreviewController;
+  github?: GitHubController;
   /** The host's fetch proxy for the download tool, when an invite is held. */
   fetchProxy?: { url: string; token: string };
   /** Project secrets, for ${NAME} placeholders in download URLs. */

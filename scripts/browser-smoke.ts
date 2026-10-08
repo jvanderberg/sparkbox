@@ -6,8 +6,11 @@
  *   npm run dev    (in another terminal)
  *   npm run test:browser
  */
-import { mkdirSync } from "node:fs";
+import { mkdirSync, mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { chromium, devices, type Page, type Route } from "playwright";
+import { startGitServer } from "./git-http-server.ts";
 
 const base = process.env.SPARKBOX_URL ?? "http://127.0.0.1:4320";
 // SPARKBOX_RESOLVE="host IP" pins a hostname while its DNS record propagates.
@@ -16,6 +19,8 @@ const launchArgs = resolve
   ? [`--host-resolver-rules=MAP ${resolve.split(" ")[0]} ${resolve.split(" ")[1]}`]
   : [];
 mkdirSync("artifacts", { recursive: true });
+// Pushes and clones go to a local git server standing in for github.com.
+const gitServer = await startGitServer(mkdtempSync(join(tmpdir(), "sparkbox-git-")));
 
 /**
  * Enough of GitHub's API, answered by Playwright, for Back up and Publish to
@@ -23,11 +28,9 @@ mkdirSync("artifacts", { recursive: true });
  */
 function fakeGitHub(page: Page) {
   const state = {
-    trees: [] as string[][],
-    commits: [] as string[],
+    repos: [] as string[],
     pages: null as null | { build_type: string },
     builds: 0,
-    head: "seed",
   };
   const headers = {
     "content-type": "application/json",
@@ -35,6 +38,13 @@ function fakeGitHub(page: Page) {
     "access-control-allow-headers": "*",
     "access-control-allow-methods": "*",
     "cross-origin-resource-policy": "cross-origin",
+  };
+  const head = (repo: string) => {
+    try {
+      return gitServer.git("ada", `${repo}.git`, ["rev-parse", "HEAD"]).trim();
+    } catch {
+      return "";
+    }
   };
   const handler = async (route: Route) => {
     const request = route.request();
@@ -45,53 +55,53 @@ function fakeGitHub(page: Page) {
       route.fulfill({ status, headers, body: JSON.stringify(body) });
     const body = request.postData() ? JSON.parse(request.postData() ?? "{}") : {};
     const path = url.pathname;
+    const repoJson = (name: string) => ({
+      owner: { login: "ada" },
+      name,
+      default_branch: "main",
+      html_url: `https://github.com/ada/${name}`,
+      description: "A smoke project",
+      pushed_at: new Date().toISOString(),
+      fork: false,
+    });
     if (path === "/user") return json(200, { login: "ada" });
-    if (path === "/user/repos")
-      return json(201, {
-        owner: { login: "ada" },
-        name: body.name,
-        default_branch: "main",
-        html_url: `https://github.com/ada/${body.name}`,
-      });
+    if (path === "/user/repos" && method === "POST") {
+      state.repos.push(body.name);
+      return json(201, repoJson(body.name));
+    }
+    if (path === "/user/repos") return json(200, state.repos.map(repoJson));
     const repo = /^\/repos\/ada\/([^/]+)(.*)$/.exec(path);
     if (!repo) return json(404, { message: "Not Found" });
     const rest = repo[2] ?? "";
-    if (rest === "/git/ref/heads/main") return json(200, { object: { sha: state.head } });
-    if (rest.startsWith("/git/commits/")) return json(200, { tree: "t0" });
-    if (rest === "/git/blobs" && method === "POST") {
-      const { createHash } = await import("node:crypto");
-      const content = Buffer.from(body.content, "base64");
-      const sha = createHash("sha1")
-        .update(`blob ${content.length}\0`)
-        .update(content)
-        .digest("hex");
-      return json(201, { sha });
-    }
-    if (rest === "/git/trees" && method === "POST") {
-      state.trees.push((body.tree as { path: string }[]).map((entry) => entry.path));
-      return json(201, { sha: `tree${state.trees.length}` });
-    }
-    if (rest === "/git/commits" && method === "POST") {
-      state.commits.push(body.message);
-      return json(201, { sha: `commit${state.commits.length}` });
-    }
-    if (rest === "/git/refs/heads/main" && method === "PATCH") {
-      state.head = body.sha;
-      return json(200, {});
-    }
+    const name = repo[1] ?? "";
+    if (rest === "") return json(200, repoJson(name));
     if (rest === "/pages" && method === "POST") {
       state.pages = { build_type: body.build_type };
-      return json(201, { html_url: `https://ada.github.io/${repo[1]}/` });
+      return json(201, { html_url: `https://ada.github.io/${name}/` });
     }
     if (rest === "/pages/builds" && method === "POST") {
       state.builds++;
       return json(201, {});
     }
     if (rest === "/pages/builds/latest")
-      return json(200, { status: "built", commit: state.head, error: { message: null } });
+      return json(200, { status: "built", commit: head(name), error: { message: null } });
+    if (rest === "/actions/runs") return json(200, { workflow_runs: [] });
     return json(404, { message: `no fake for ${method} ${path}` });
   };
-  return { state, install: () => page.route("https://api.github.com/**", handler) };
+  return {
+    state,
+    install: async () => {
+      await page.route("https://api.github.com/**", handler);
+      // The host's git relay, pointed at the local git server.
+      await page.route("**/api/git/**", async (route) => {
+        const target = new URL(route.request().url());
+        target.protocol = "http:";
+        target.host = `127.0.0.1:${gitServer.port}`;
+        const response = await route.fetch({ url: target.href });
+        await route.fulfill({ response });
+      });
+    },
+  };
 }
 
 async function run(label: string, options: { mobile?: boolean; dark?: boolean }) {
@@ -125,7 +135,9 @@ async function run(label: string, options: { mobile?: boolean; dark?: boolean })
       (command) =>
         (
           window as unknown as {
-            sparkboxExec: (c: string) => Promise<{ stdout: string; stderr: string }>;
+            sparkboxExec: (
+              c: string,
+            ) => Promise<{ stdout: string; stderr: string; exitCode: number }>;
           }
         ).sparkboxExec(command),
       command,
@@ -432,35 +444,83 @@ console.log(out.join(" "));`,
   await page
     .locator(".file-diff summary code", { hasText: "index.html" })
     .waitFor({ timeout: 20_000 });
-  // Back up: one click creates the repository and pushes every project file
-  // as one commit; the Changes view then compares against that push.
+  // Back up: one click creates the repository, commits everything and pushes
+  // (through the git relay to the local git server); Changes is then clean.
   if (await menu.isVisible()) await menu.click();
   await page.getByRole("button", { name: "Back up to GitHub" }).click();
-  await page.getByText(/Backed up to https:\/\/github\.com\/ada\//).waitFor({ timeout: 30_000 });
+  await page.getByText(/Backed up to https:\/\/github\.com\/ada\//).waitFor({ timeout: 60_000 });
   if (await menu.isVisible()) await page.keyboard.press("Escape");
-  await page.getByText("No changes since the last backup.").waitFor({ timeout: 20_000 });
-  const pushed = github.state.trees[0] ?? [];
-  for (const path of ["PROJECT.md", "index.html", "app.js", "styles.css", "sparkbox.json"])
+  await page.getByText("No changes since the last commit.").waitFor({ timeout: 20_000 });
+  const repoName = github.state.repos[0] ?? "";
+  if (!repoName) throw new Error("no repository was created");
+  const pushed = gitServer
+    .git("ada", `${repoName}.git`, ["ls-tree", "--name-only", "-r", "HEAD"])
+    .split("\n")
+    .filter(Boolean);
+  for (const path of [
+    "PROJECT.md",
+    ".gitignore",
+    "index.html",
+    "app.js",
+    "styles.css",
+    "sparkbox.json",
+  ])
     if (!pushed.includes(path)) throw new Error(`backup is missing ${path}: ${pushed.join(", ")}`);
   if (pushed.some((path) => path.startsWith(".sparkbox/") || path.startsWith("node_modules/")))
     throw new Error(`backup includes sandbox files: ${pushed.join(", ")}`);
-  console.log(`${label} backed up ${pushed.length} files`);
+  const history = gitServer.git("ada", `${repoName}.git`, ["log", "--oneline"]).trim().split("\n");
+  if (history.length !== 2 || !history[1]?.includes("Start project"))
+    throw new Error(`unexpected history on the remote: ${history.join(" | ")}`);
+  console.log(`${label} backed up ${pushed.length} files to ada/${repoName}`);
+  // The agent's git command runs in the sandbox and is answered by the page.
+  const gitLog = await exec("git log --oneline -n 3");
+  if (!gitLog.stdout.includes("Start project") || gitLog.exitCode !== 0)
+    throw new Error(`git in the sandbox did not answer: ${JSON.stringify(gitLog)}`);
+  const gitStatus = await exec("echo // more >> app.js && git status --short && git diff --name-only");
+  if (!gitStatus.stdout.includes(" M app.js"))
+    throw new Error(`git status missed an edit: ${JSON.stringify(gitStatus)}`);
+  const gitCommit = await exec('git commit -am "Agent edit" && git push');
+  if (!gitCommit.stdout.includes("[main ") || !gitCommit.stdout.includes("Pushed main to origin"))
+    throw new Error(`git commit and push from the sandbox failed: ${JSON.stringify(gitCommit)}`);
+  if (!gitServer.git("ada", `${repoName}.git`, ["log", "-1", "--format=%s"]).includes("Agent edit"))
+    throw new Error("the agent's push did not reach the remote");
+  console.log(`${label} git works from the sandbox`);
   // Publish: a static project gets Pages from the main branch and a .nojekyll.
   if (await menu.isVisible()) await menu.click();
   await page.getByRole("button", { name: "Publish", exact: true }).click();
-  await page.getByRole("link", { name: "Open site" }).waitFor({ timeout: 30_000 });
+  await page.getByRole("link", { name: "Open site" }).waitFor({ timeout: 60_000 });
   await page.getByText(/Published: https:\/\/ada\.github\.io\//).waitFor({ timeout: 60_000 });
   if (await menu.isVisible()) await page.keyboard.press("Escape");
   if (github.state.pages?.build_type !== "legacy")
     throw new Error(
       `pages were not enabled from the branch: ${JSON.stringify(github.state.pages)}`,
     );
-  if (!github.state.trees.at(-1)?.includes(".nojekyll"))
-    throw new Error("publish did not add .nojekyll");
-  if (github.state.commits.length !== 2)
-    throw new Error(`expected two commits, got ${github.state.commits.join(" | ")}`);
+  const published = gitServer.git("ada", `${repoName}.git`, [
+    "ls-tree",
+    "--name-only",
+    "-r",
+    "HEAD",
+  ]);
+  if (!published.includes(".nojekyll")) throw new Error("publish did not add .nojekyll");
   await page.screenshot({ path: `artifacts/smoke-${label}-published.png` });
-  console.log(`${label} published at ${github.state.pages ? "a Pages URL" : "nowhere"}`);
+  console.log(`${label} published at a Pages URL`);
+  if (!options.mobile) {
+    // Open from GitHub clones the repository into a new project.
+    await page.getByRole("button", { name: "← Projects" }).click();
+    await page.getByRole("button", { name: "Open from GitHub" }).click();
+    await page.getByRole("button", { name: new RegExp(`^${repoName}`) }).click();
+    await page.getByText("Sandbox ready").waitFor({ state: "attached", timeout: 180_000 });
+    const cloned = await exec("cat index.html && git log --oneline -n 1");
+    if (
+      !cloned.stdout.includes(`Smoke ${label}`) ||
+      !cloned.stdout.includes("Publish to GitHub Pages")
+    )
+      throw new Error(`the clone is not the repository: ${JSON.stringify(cloned)}`);
+    console.log(`${label} opened the repository from GitHub`);
+    await page.getByRole("button", { name: "← Projects" }).click();
+    await page.getByRole("button", { name: `Smoke ${label}`, exact: true }).click();
+    await page.getByText("Sandbox ready").waitFor({ state: "attached", timeout: 180_000 });
+  }
   if (!options.mobile) {
     // A reloaded page must be able to expose the preview again. The preview
     // origin's service worker outlives the page and still holds the route the
@@ -490,5 +550,9 @@ console.log(out.join(" "));`,
   console.log(`ok ${label}`);
 }
 
-await run("desktop", {});
-await run("mobile", { mobile: true, dark: true });
+try {
+  await run("desktop", {});
+  await run("mobile", { mobile: true, dark: true });
+} finally {
+  gitServer.close();
+}

@@ -39,7 +39,7 @@ export const sandboxPackages = [
 ] as const;
 
 export type SandboxProgress = {
-  phase: "runtime" | "resolving" | "downloading" | "loading" | "restoring" | "ready";
+  phase: "runtime" | "resolving" | "downloading" | "loading" | "restoring" | "cloning" | "ready";
   downloadedBytes?: number;
   totalBytes?: number | null;
   percent?: number | null;
@@ -206,7 +206,8 @@ export class WasmerSandbox implements Sandbox {
       files,
       env: {
         HOME: "/workspace",
-        PATH: "/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin:.",
+        // .sparkbox/bin holds the git command, which Sparkbox answers from the page.
+        PATH: "/workspace/.sparkbox/bin:/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin:.",
         TERM: "xterm-256color",
         CI: "1",
         npm_config_update_notifier: "false",
@@ -419,6 +420,11 @@ export class WasmerSandbox implements Sandbox {
   async mkdir(path: string) {
     await this.recover(() => this.handle.fs.mkdir(this.absolute(path), { recursive: true }));
     this.changed();
+  }
+  /** The direct children of a directory, every kind. */
+  async readDir(path: string): Promise<{ name: string; kind: "file" | "directory" }[]> {
+    const entries = await this.recover(() => this.handle.fs.readDir(this.absolute(path)));
+    return entries.map((entry) => ({ name: entry.name, kind: entry.kind }));
   }
   listFiles() {
     return this.recover(async () => {

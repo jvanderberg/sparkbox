@@ -168,6 +168,14 @@ export async function listSnapshots(): Promise<string[]> {
   }
 }
 
+/** The project's git objects and refs, kept beside the files. */
+export function loadGitStore(workspace: string) {
+  return loadSnapshot(`${workspace}#git`);
+}
+export function saveGitStore(workspace: string, files: Record<string, Uint8Array>) {
+  return saveSnapshot(`${workspace}#git`, files);
+}
+
 /** The files recorded by the last Save version, for the Changes view. */
 export function loadBaseline(workspace: string) {
   return loadSnapshot(`${workspace}#baseline`);

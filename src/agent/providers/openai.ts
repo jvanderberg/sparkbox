@@ -156,6 +156,7 @@ export class OpenAISession implements ProviderSession {
           const result = (await runPageTool(item.name, args, {
             sandbox: context.sandbox,
             preview: context.preview,
+            github: context.github,
             signal: context.signal,
             fetchProxy: context.fetchProxy,
             secrets: context.secrets,

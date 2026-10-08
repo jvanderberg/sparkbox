@@ -4,6 +4,7 @@ import type { AgentEvent, QueuedPrompt } from "../agents/protocol.ts";
 import { agentQueueLimit } from "../agents/protocol.ts";
 import { kv } from "../sandbox/storage.ts";
 import type { Sandbox } from "../sandbox/types.ts";
+import type { GitHubController, GitHubState } from "./github-controller.ts";
 import type { PreviewController } from "./preview-controller.ts";
 import { AnthropicSession } from "./providers/anthropic.ts";
 import { OpenAISession } from "./providers/openai.ts";
@@ -45,6 +46,9 @@ export type RunnerOptions = {
   previewErrors?: () => string[];
   /** The preview tool's backend. */
   preview?: PreviewController;
+  /** The github tool's backend, and the state the prompt reports each turn. */
+  github?: GitHubController;
+  githubState?: () => GitHubState;
   /** Test seam: build a session instead of reading saved keys. */
   createSession?: (provider: ProviderId, model: string) => ProviderSession;
 };
@@ -222,6 +226,7 @@ export class AgentRunner {
         previewPort: this.options.previewPort,
         projectBrief: brief?.slice(0, 8000),
         previewErrors: this.options.previewErrors?.() ?? [],
+        github: this.options.githubState?.(),
       });
       await session.run(
         { text: message.text, images: message.images },
@@ -230,6 +235,7 @@ export class AgentRunner {
           signal: controller.signal,
           system,
           preview: this.options.preview,
+          github: this.options.github,
           fetchProxy: this.options.fetchProxy?.(),
           secrets,
           sink: {

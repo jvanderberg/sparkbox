@@ -18,6 +18,7 @@ import {
   readPreviewConfig,
   writePreviewConfig,
 } from "./preview-config.ts";
+import { gitBridgePort } from "./sandbox/git-bridge-script.ts";
 import esbuildShim from "./sandbox/guest/esbuild-shim.js?raw";
 import rollupParseAst from "./sandbox/guest/rollup-parse-ast.js?raw";
 import viteLauncher from "./sandbox/guest/vite-launcher.mjs?raw";
@@ -119,6 +120,7 @@ export function usePreview(sandbox: WasmerSandbox | null, origin: string) {
     void readPreviewConfig(sandbox).then(setConfig);
     return sandbox.onListen(
       (port) => {
+        if (port === gitBridgePort) return;
         setPorts((known) => (known.includes(port) ? known : [...known, port]));
         if (port !== configRef.current.port || !relisten.current || !process.current) return;
         relisten.current = false;

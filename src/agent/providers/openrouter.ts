@@ -115,6 +115,7 @@ export class OpenRouterSession implements ProviderSession {
         const page = await runPageTool(call.function.name, args, {
           sandbox: context.sandbox,
           preview: context.preview,
+          github: context.github,
           signal: context.signal,
           fetchProxy: context.fetchProxy,
           secrets: context.secrets,

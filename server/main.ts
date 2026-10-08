@@ -10,6 +10,7 @@ import { extname, join, normalize } from "node:path";
 import { WebSocketServer } from "ws";
 import { BodyTooLargeError, readBody } from "./body.ts";
 import { serveFetchProxy } from "./fetch-proxy.ts";
+import { serveGitProxy } from "./git-proxy.ts";
 import { exchangeGitHubCode } from "./github-auth.ts";
 import { DailyCounter, mintToken, verifyToken } from "./tokens.ts";
 import { serveWisp } from "./wisp.ts";
@@ -136,6 +137,18 @@ async function handleApi(request: IncomingMessage, response: ServerResponse, url
       fetchUrl: secret ? `${publicOrigin}/api/fetch` : "",
       freeAgent: freeAgentEnabled ? { label: freeLabel, model: freeModel } : null,
       githubClientId: githubClientSecret ? githubClientId : "",
+      gitProxyUrl: publicOrigin ? `${publicOrigin}/api/git` : "/api/git",
+    });
+  }
+  if (url.pathname.startsWith("/api/git/")) {
+    // git smart HTTP to github.com for the page's git client. The user's own
+    // GitHub token travels in the Authorization header; nothing is kept.
+    const ip = String(request.headers["fly-client-ip"] ?? request.socket.remoteAddress ?? "?");
+    if (requests.add(`git:${ip}`) > 3000)
+      return sendJson(response, 429, { error: "Too many git requests today." });
+    return serveGitProxy(request, response, url.pathname.slice("/api/git/".length), url.search, {
+      headers: isolation,
+      log,
     });
   }
   if (url.pathname === "/api/github/token" && request.method === "POST") {

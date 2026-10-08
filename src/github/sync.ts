@@ -1,20 +1,11 @@
 /**
- * Backing up and publishing a project: one commit per push, Pages for the
- * site, and the reverse trip that opens a repository as a project.
+ * Publishing a project: the files a site needs, turning Pages on, and
+ * watching GitHub until the site reflects a commit. Pushes themselves are
+ * git (see src/git/repo.ts).
  */
-
-import { isIgnoredPath } from "../sandbox/types.ts";
 import type { FileMap } from "../workspace/changes.ts";
-import { FILE_LIMIT, TREE_LIMIT } from "../workspace/types.ts";
-import { type GitHubClient, GitHubError, type Repository } from "./api.ts";
-import {
-  filesHoldingSecrets,
-  type ProjectKind,
-  pagesWorkflow,
-  planPush,
-  projectKind,
-  workflowPath,
-} from "./git.ts";
+import type { GitHubClient, Repository } from "./api.ts";
+import { type ProjectKind, pagesWorkflow, projectKind, workflowPath } from "./git.ts";
 
 const encoder = new TextEncoder();
 
@@ -29,67 +20,9 @@ export type GitHubLink = Repository & {
   auto: boolean;
 };
 
-async function inBatches<T, R>(items: T[], size: number, fn: (item: T) => Promise<R>) {
-  const results: R[] = [];
-  for (let i = 0; i < items.length; i += size)
-    results.push(...(await Promise.all(items.slice(i, i + size).map(fn))));
-  return results;
-}
-
-export type PushResult = { sha: string; uploaded: number; files: number; unchanged: boolean };
-
-/**
- * Push `current` as one commit on top of the branch head. `previous` is the
- * snapshot of the last push (or empty), used to skip blobs GitHub already has.
- */
-export async function pushSnapshot(
-  client: GitHubClient,
-  repo: Repository,
-  previous: FileMap,
-  current: FileMap,
-  message: string,
-  secrets: Record<string, string> = {},
-): Promise<PushResult> {
-  const leaking = filesHoldingSecrets(current, secrets);
-  if (leaking.length)
-    throw new Error(
-      `Not pushed: ${leaking.join(", ")} ${leaking.length === 1 ? "contains" : "contain"} a project secret's value. Secrets belong in Settings, not in files.`,
-    );
-  const plan = await planPush(previous, current);
-  const head = await client.head(repo);
-  if (head) {
-    // Nothing to commit when the head's tree would be identical.
-    const previousPlan = await planPush({}, previous);
-    const same =
-      previousPlan.entries.length === plan.entries.length &&
-      previousPlan.entries.every((entry, i) => plan.entries[i]?.sha === entry.sha) &&
-      previousPlan.entries.length > 0;
-    if (same) return { sha: head.sha, uploaded: 0, files: plan.entries.length, unchanged: true };
-  }
-  if (!plan.entries.length) throw new Error("There are no files to push.");
-  const upload = async (paths: string[]) =>
-    inBatches(paths, 6, async (path) => {
-      const data = current[path];
-      if (!data) return;
-      const sha = await client.createBlob(repo, data);
-      const expected = plan.entries.find((entry) => entry.path === path)?.sha;
-      if (expected && sha !== expected)
-        throw new Error(`GitHub stored ${path} under a different id than expected.`);
-    });
-  await upload(plan.upload);
-  let tree: string;
-  try {
-    tree = await client.createTree(repo, plan.entries);
-  } catch (error) {
-    // A blob the previous snapshot promised is not there (the repository was
-    // changed elsewhere, or the record of the last push was lost): send all.
-    if (!(error instanceof GitHubError && error.status === 422)) throw error;
-    await upload(plan.entries.map((entry) => entry.path).filter((p) => !plan.upload.includes(p)));
-    tree = await client.createTree(repo, plan.entries);
-  }
-  const sha = await client.createCommit(repo, message, tree, head ? [head.sha] : []);
-  await client.setHead(repo, sha, !head);
-  return { sha, uploaded: plan.upload.length, files: plan.entries.length, unchanged: false };
+/** The clone URL git uses for a repository. */
+export function cloneUrl(repo: Repository) {
+  return `https://github.com/${repo.owner}/${repo.name}.git`;
 }
 
 /**
@@ -138,30 +71,4 @@ export async function siteState(
   if (build.status === "errored")
     return { state: "failed", detail: `GitHub Pages could not build the site: ${build.error}` };
   return { state: "building" };
-}
-
-/** All project files of a repository, for opening it as a project. */
-export async function importRepository(
-  client: GitHubClient,
-  repo: Repository,
-  onProgress?: (done: number, total: number) => void,
-): Promise<FileMap> {
-  const { entries, truncated } = await client.tree(repo);
-  if (truncated) throw new Error("This repository is too large to open here.");
-  const wanted = entries.filter((entry) => !isIgnoredPath(entry.path) && entry.size <= FILE_LIMIT);
-  const total = wanted.reduce((sum, entry) => sum + entry.size, 0);
-  if (total > TREE_LIMIT) throw new Error("This repository is too large to open here.");
-  const files: FileMap = {};
-  let done = 0;
-  await inBatches(wanted, 6, async (entry) => {
-    try {
-      files[entry.path] = await client.blob(repo, entry.sha);
-    } catch (error) {
-      if (error instanceof GitHubError && error.status === 404) return;
-      throw error;
-    }
-    done++;
-    onProgress?.(done, wanted.length);
-  });
-  return files;
 }

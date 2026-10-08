@@ -55,7 +55,9 @@ export function GitHubControls({
       >
         <CloudUpload size={14} aria-hidden="true" />
         {busy === "backing-up"
-          ? "Backing up…"
+          ? link
+            ? "Backing up…"
+            : "Committing…"
           : link
             ? backedUp
               ? "Backed up"

@@ -103,6 +103,13 @@ export const settings = {
     // Settings and the workspace header both show the link; tell the other.
     window.dispatchEvent(new CustomEvent(githubLinkEvent, { detail: project }));
   },
+  /** A repository to clone into a project the first time it opens. */
+  pendingClone(project: string) {
+    return read(`clone:${project}`);
+  },
+  setPendingClone(project: string, url: string | null) {
+    write(`clone:${project}`, url ?? "");
+  },
   configuredProviders(): ProviderId[] {
     return (Object.keys(providers) as ProviderId[]).filter((provider) =>
       Boolean(this.key(provider)),

@@ -2,8 +2,6 @@ import { useEffect, useState } from "react";
 import { Modal } from "./components.tsx";
 import { forgetIfExpired, githubAccount } from "./github/account.ts";
 import type { Repository } from "./github/api.ts";
-import { importRepository } from "./github/sync.ts";
-import type { FileMap } from "./workspace/changes.ts";
 
 type Listed = Repository & { description: string; updatedAt: string; fork: boolean };
 
@@ -16,13 +14,12 @@ export function GitHubOpen({
   onOpen,
   onClose,
 }: {
-  onOpen: (repo: Repository, files: FileMap) => Promise<void>;
+  onOpen: (repo: Repository) => Promise<void>;
   onClose: () => void;
 }) {
   const [repos, setRepos] = useState<Listed[] | null>(null);
   const [error, setError] = useState("");
   const [filter, setFilter] = useState("");
-  const [progress, setProgress] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
 
   useEffect(() => {
@@ -41,21 +38,13 @@ export function GitHubOpen({
   }, []);
 
   async function open(repo: Listed) {
-    const client = githubAccount.client();
-    if (!client) return;
     setBusy(repo.name);
     setError("");
     try {
-      const files = await importRepository(client, repo, (done, total) =>
-        setProgress(`Fetching ${done} of ${total} files…`),
-      );
-      if (!Object.keys(files).length) throw new Error("That repository has no files to open.");
-      await onOpen(repo, files);
+      await onOpen(repo);
     } catch (cause) {
-      forgetIfExpired(cause);
       setError(cause instanceof Error ? cause.message : "Could not open the repository.");
       setBusy(null);
-      setProgress("");
     }
   }
 
@@ -66,8 +55,8 @@ export function GitHubOpen({
     <Modal title="Open from GitHub" onClose={onClose}>
       <div className="modal-body github-open">
         <p className="muted">
-          Your repositories, newest first. Opening one copies its files into this browser as a
-          project that backs up to the same repository.
+          Your repositories, newest first. Opening one clones it into this browser as a project that
+          backs up to the same repository.
         </p>
         <input
           aria-label="Filter repositories"
@@ -89,7 +78,7 @@ export function GitHubOpen({
               >
                 {repo.name}
                 {repo.description && <span className="github-repo-note">{repo.description}</span>}
-                {busy === repo.name && <span className="github-repo-note">{progress}</span>}
+                {busy === repo.name && <span className="github-repo-note">Opening…</span>}
               </button>
             </li>
           ))}

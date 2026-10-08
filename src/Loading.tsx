@@ -6,6 +6,7 @@ const steps: { phase: SandboxProgress["phase"][]; label: string }[] = [
   { phase: ["runtime"], label: "Starting the runtime" },
   { phase: ["resolving", "downloading", "loading"], label: "Fetching the sandbox" },
   { phase: ["restoring"], label: "Restoring your files" },
+  { phase: ["cloning"], label: "Fetching the repository from GitHub" },
   { phase: ["ready"], label: "Ready" },
 ];
 
@@ -38,9 +39,11 @@ export function Loading({
       ? 100
       : progress.phase === "restoring" || progress.phase === "loading"
         ? 95
-        : typeof progress.percent === "number"
-          ? Math.min(94, Math.max(2, progress.percent * 0.9))
-          : null;
+        : progress.phase === "cloning"
+          ? 97
+          : typeof progress.percent === "number"
+            ? Math.min(94, Math.max(2, progress.percent * 0.9))
+            : null;
   const detail = error
     ? ""
     : progress.phase === "downloading" && progress.downloadedBytes !== undefined

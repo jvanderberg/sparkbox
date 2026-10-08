@@ -1,3 +1,4 @@
+import type { GitHubState } from "./github-controller.ts";
 import type { ProviderId } from "./providers/types.ts";
 
 /**
@@ -6,6 +7,26 @@ import type { ProviderId } from "./providers/types.ts";
  * Sprite, the managed preview commands or civic-spark git are adapted to
  * the in-browser sandbox. Project text is data, never policy.
  */
+function githubLines(state: GitHubState | undefined): string {
+  if (!state?.connected)
+    return 'not connected. Once the app runs and looks right for the first time, tell the user once, in one sentence, that clicking "Back up to GitHub" in the header keeps a copy of the project on GitHub and lets Publish put it online; do not repeat it every turn. Until then git push is not possible.';
+  const parts = [
+    state.repository
+      ? `connected; this project backs up to ${state.repository} (origin). git push works.`
+      : "connected, but this project has no repository yet: the user's first click on Back up or Publish creates one.",
+  ];
+  if (state.siteUrl) parts.push(`Published at ${state.siteUrl}.`);
+  if (state.lastBuild)
+    parts.push(
+      state.lastBuild.state === "failed"
+        ? `The last GitHub build FAILED: ${state.lastBuild.detail ?? "see the github tool's logs"}.`
+        : state.lastBuild.state === "building"
+          ? "The last push is still building on GitHub."
+          : "The last build succeeded.",
+    );
+  return parts.join(" ");
+}
+
 export function systemPrompt(options: {
   provider: ProviderId;
   files: string[];
@@ -15,6 +36,8 @@ export function systemPrompt(options: {
   secretNames?: string[];
   projectBrief?: string;
   previewErrors?: string[];
+  /** GitHub connection and last build, refreshed each turn. */
+  github?: GitHubState;
 }) {
   const toolNotes = `${
     {
@@ -29,6 +52,7 @@ export function systemPrompt(options: {
     }[options.provider]
   }
 - download: fetches a URL with the user's browser and saves it into the project (default data/<filename>). It works when the server allows cross-origin reads, which most open-data portals, GitHub raw files, npm and CDNs do; when the browser is refused and the network relay is on, the host fetches it instead (GET only, 25 MiB cap). Keys in a URL stay in the request; never copy them into files or replies. If the download still fails, ask the user to upload the file through Files instead.
+- github: the project's GitHub side: "status" (connection, repository, site, last build), "runs" (latest Actions runs) and "logs" (why a build failed). Pushing itself is "git push".
 - preview: looks at the running app the way the user sees it, starting the preview if needed. format "screenshot" returns an image at the "phone" (390x844), "tablet" (820x1180) or "desktop" (1280x800) viewport; "text" returns the headings, links, buttons, inputs, images, stylesheet status, color scheme and visible text plus overflow information; "html" returns the current DOM; "errors" returns page errors on a fresh load and those the user hit. scheme "light" or "dark" forces that color scheme (default: the user's system setting), so check both when colors matter. Screenshots are rendered by the browser from the live DOM and are close to what the user sees, but not pixel-exact; when exact appearance matters, ask the user to paste a screenshot into the chat (the paperclip or Ctrl/Cmd+V), which you can see directly.`;
   const tree = options.files.length
     ? options.files.slice(0, 300).join("\n") + (options.files.length > 300 ? "\n…" : "")
@@ -93,9 +117,10 @@ Run the app
 - A sandbox localhost URL is not a link the user can open; the Preview button is.
 
 Share work
-- There is no git in this sandbox. Files are saved automatically; the user reviews every change in the Changes view. The Back up button in the header pushes the project to a GitHub repository (one commit per push, and automatically after each of your turns once connected); Publish puts it online with GitHub Pages. You cannot run either; the user clicks them.
-- Published sites live under a path (https://<user>.github.io/<repo>/), so links and asset URLs must be relative or use import.meta.env.BASE_URL in Vite; never start them with "/". Vite projects are built on GitHub by .github/workflows/pages.yml, which Sparkbox writes at the first publish; leave it alone unless the user asks.
-- At meaningful milestones, briefly summarize what is ready and suggest the user back up or publish from the header. Suggest it periodically, not after every edit.
+- git works here: status, add, commit, log, diff, show, branch, checkout, merge, reset, restore, push, pull, fetch, remote, tag (no rebase or stash). The repository is kept by Sparkbox, so there is no .git directory on disk and no credentials to configure; the user may know nothing about git, and that is fine. Commit at milestones with clear messages (git add -A && git commit -m "..."). After each of your turns Sparkbox commits whatever is left with the user's prompt as the message and, when GitHub is connected, pushes.
+- GitHub: ${githubLines(options.github)}
+- Published sites live under a path (https://<user>.github.io/<repo>/), so links and asset URLs must be relative or use import.meta.env.BASE_URL in Vite; never start them with "/". Vite projects are built on GitHub by .github/workflows/pages.yml, which Sparkbox writes at the first publish; leave it alone unless the user asks. When the last build failed, use the github tool's "logs" to read why, fix it, commit and push.
+- At meaningful milestones, briefly summarize what is ready. Suggest it periodically, not after every edit.
 - Keep replies short. Describe what changed, how to check it in the preview, and anything you could not verify.
 
 ${errors}

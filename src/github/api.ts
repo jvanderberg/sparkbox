@@ -267,6 +267,81 @@ export class GitHubClient {
     return run ? { status: run.status, conclusion: run.conclusion, url: run.html_url } : null;
   }
 
+  /** The latest Actions runs, newest first. */
+  async workflowRuns(
+    repo: Repository,
+    count = 5,
+  ): Promise<
+    {
+      id: number;
+      status: string;
+      conclusion: string | null;
+      url: string;
+      message: string;
+      sha: string;
+      createdAt: string;
+    }[]
+  > {
+    const { data } = await this.request<{
+      workflow_runs: {
+        id: number;
+        status: string;
+        conclusion: string | null;
+        html_url: string;
+        head_sha: string;
+        head_commit: { message: string } | null;
+        created_at: string;
+      }[];
+    }>("GET", repoPath(repo, `/actions/runs?per_page=${count}`));
+    return data.workflow_runs.map((run) => ({
+      id: run.id,
+      status: run.status,
+      conclusion: run.conclusion,
+      url: run.html_url,
+      message: run.head_commit?.message.split("\n")[0] ?? "",
+      sha: run.head_sha,
+      createdAt: run.created_at,
+    }));
+  }
+
+  /** The jobs of a run with their steps. */
+  async jobs(
+    repo: Repository,
+    runId: number,
+  ): Promise<
+    {
+      id: number;
+      name: string;
+      conclusion: string | null;
+      steps: { name: string; conclusion: string | null }[];
+    }[]
+  > {
+    const { data } = await this.request<{
+      jobs: {
+        id: number;
+        name: string;
+        conclusion: string | null;
+        steps: { name: string; conclusion: string | null }[];
+      }[];
+    }>("GET", repoPath(repo, `/actions/runs/${runId}/jobs`));
+    return data.jobs.map((job) => ({
+      id: job.id,
+      name: job.name,
+      conclusion: job.conclusion,
+      steps: job.steps.map((step) => ({ name: step.name, conclusion: step.conclusion })),
+    }));
+  }
+
+  /** A job's log text, through the host relay (GitHub serves it from a host without CORS). */
+  async jobLogs(repo: Repository, jobId: number, relay: string): Promise<string> {
+    const url = `${relay.replace(/\/$/, "")}/api.github.com/repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.name)}/actions/jobs/${jobId}/logs`;
+    const response = await this.fetchFn(url, {
+      headers: { authorization: `Bearer ${this.token}` },
+    });
+    if (!response.ok) throw new GitHubError(describe(response.status, null), response.status);
+    return response.text();
+  }
+
   /** Ask Pages to build the branch now rather than on its own schedule. */
   async requestPagesBuild(repo: Repository): Promise<void> {
     await this.request("POST", repoPath(repo, "/pages/builds"));

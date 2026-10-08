@@ -10,17 +10,16 @@ function diffLines(diff: string) {
 }
 
 /**
- * Changes since the last saved version, or since the last backup once the
- * project is on GitHub. Civic Spark's Share pushed to a team repository;
- * here Save version records a new baseline in this browser and Back up
- * pushes a commit.
+ * Uncommitted changes, as git sees them against HEAD. Civic Spark's Share
+ * pushed to a team repository; here Commit records them in the project's
+ * own repository and, once the project is on GitHub, pushes too.
  */
 export function Changes({
   value,
   refresh,
   dirty,
   readOnly,
-  mode,
+  pushes,
   onCommit,
   error,
 }: {
@@ -28,7 +27,8 @@ export function Changes({
   refresh: () => void;
   dirty: boolean;
   readOnly: boolean;
-  mode: "save" | "github";
+  /** True when a commit also pushes to GitHub. */
+  pushes: boolean;
   onCommit: (title: string) => Promise<void>;
   error: string;
 }) {
@@ -46,15 +46,9 @@ export function Changes({
     try {
       await onCommit(title.trim());
       setTitle("");
-      setNotice(mode === "github" ? "Backed up to GitHub." : "Version saved.");
+      setNotice(pushes ? "Committed and backed up to GitHub." : "Committed.");
     } catch (cause) {
-      setNotice(
-        cause instanceof Error
-          ? cause.message
-          : mode === "github"
-            ? "Could not back up."
-            : "Could not save the version.",
-      );
+      setNotice(cause instanceof Error ? cause.message : "Could not commit.");
     } finally {
       setBusy(false);
     }
@@ -84,9 +78,7 @@ export function Changes({
             void save();
           }}
         >
-          <label htmlFor={messageId}>
-            {mode === "github" ? "Commit message" : "Version description"}
-          </label>
+          <label htmlFor={messageId}>Commit message</label>
           <div className="changes-commit-row">
             <input
               id={messageId}
@@ -103,25 +95,19 @@ export function Changes({
               className="button primary"
               disabled={!canSave}
               title={
-                mode === "github"
-                  ? "Push these changes to GitHub as one commit"
-                  : "Record these changes as the saved version"
+                pushes
+                  ? "Commit these changes and push them to GitHub"
+                  : "Record these changes as a commit in the project's repository"
               }
               aria-describedby={helpId}
             >
-              {mode === "github"
-                ? busy
-                  ? "Backing up…"
-                  : "Back up to GitHub"
-                : busy
-                  ? "Saving…"
-                  : "Save version"}
+              {busy ? "Committing…" : pushes ? "Commit and back up" : "Commit"}
             </button>
           </div>
           <span id={helpId} className="sr-only">
-            {mode === "github"
-              ? "Back up pushes the current files to GitHub as one commit; later changes are compared against it."
-              : "Save version records the current files as the baseline that later changes are compared against."}
+            {pushes
+              ? "Commit records the current files in the project's git repository and pushes them to GitHub."
+              : "Commit records the current files in the project's git repository; later changes are compared against it."}
           </span>
         </form>
         {dirty ? (
@@ -146,13 +132,7 @@ export function Changes({
             Loading changes…
           </p>
         )}
-        {value && count === 0 && (
-          <p className="changes-empty">
-            {mode === "github"
-              ? "No changes since the last backup."
-              : "No changes since the saved version."}
-          </p>
-        )}
+        {value && count === 0 && <p className="changes-empty">No changes since the last commit.</p>}
         {value?.files.map((file) => (
           <details className="file-diff" key={file.path} open>
             <summary>

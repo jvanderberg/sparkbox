@@ -3,6 +3,7 @@ import type { PreviewConfig } from "../preview-config.ts";
 import { type Sandbox, workspacePath } from "../sandbox/types.ts";
 import { FILE_LIMIT } from "../workspace/types.ts";
 import { applyUpdate, parseUpdateBody } from "./apply-patch.ts";
+import type { GitHubController } from "./github-controller.ts";
 import type { PreviewController } from "./preview-controller.ts";
 import { type Secrets, substituteSecrets } from "./secrets.ts";
 
@@ -291,7 +292,45 @@ export const pageTools = [
       additionalProperties: false,
     },
   },
+  {
+    name: "github",
+    description:
+      "The project's GitHub side. action 'status': whether GitHub is connected, the repository and site URLs, uncommitted changes and the last build outcome. 'runs': the latest GitHub Actions runs (the Pages build) with status and conclusion. 'logs': the failing steps and log tail of the latest failed run, or of the run given by number, to see why a build failed. Pushing is done with the git command.",
+    parameters: {
+      type: "object",
+      properties: {
+        action: { type: "string", enum: ["status", "runs", "logs"] },
+        run: {
+          type: "number",
+          description: "For logs: a run id from 'runs' (default: the latest failed run)",
+        },
+      },
+      required: ["action"],
+      additionalProperties: false,
+    },
+  },
 ] as const;
+
+export async function githubTool(
+  controller: GitHubController | undefined,
+  args: Record<string, unknown>,
+): Promise<ToolOutcome> {
+  if (!controller) return { output: "GitHub is not available in this session.", error: true };
+  const action = String(args.action ?? "status");
+  try {
+    if (action === "runs") return { output: truncate(await controller.runs()) };
+    if (action === "logs")
+      return {
+        output: truncate(
+          await controller.logs(typeof args.run === "number" ? args.run : undefined),
+          outputLimit * 2,
+        ),
+      };
+    return { output: truncate(await controller.status()) };
+  } catch (error) {
+    return { output: error instanceof Error ? error.message : String(error), error: true };
+  }
+}
 
 export type ToolOutcome = {
   output: string;
@@ -487,6 +526,7 @@ export async function runPageTool(
   context: {
     sandbox: Sandbox;
     preview?: PreviewController;
+    github?: GitHubController;
     signal?: AbortSignal;
     fetchProxy?: FetchProxy;
     secrets?: Secrets;
@@ -501,5 +541,6 @@ export async function runPageTool(
       context.secrets ?? {},
     );
   if (name === "preview") return previewTool(context.preview, args);
+  if (name === "github") return githubTool(context.github, args);
   return null;
 }

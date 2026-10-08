@@ -1,54 +1,10 @@
 /**
- * Git without git: the pure parts of pushing a project snapshot to GitHub.
- * Blob ids are computed here so unchanged files are never uploaded twice,
- * and the Pages workflow is generated here so a test can read it.
+ * Pure helpers around publishing: the secret scan a push runs first, how a
+ * project becomes a site, and names for repositories and commits.
  */
 import type { FileMap } from "../workspace/changes.ts";
 
-const encoder = new TextEncoder();
 const decoder = new TextDecoder();
-
-function hex(bytes: ArrayBuffer) {
-  return [...new Uint8Array(bytes)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
-}
-
-/** The id git gives a blob: sha1 over "blob <size>\0<content>". */
-export async function blobSha(data: Uint8Array): Promise<string> {
-  const header = encoder.encode(`blob ${data.byteLength}\0`);
-  const whole = new Uint8Array(header.byteLength + data.byteLength);
-  whole.set(header);
-  whole.set(data, header.byteLength);
-  return hex(await crypto.subtle.digest("SHA-1", whole));
-}
-
-export type PushPlan = {
-  /** Every file in the snapshot with its blob id. */
-  entries: { path: string; sha: string }[];
-  /** The paths whose blobs are not in the previous push and must be uploaded. */
-  upload: string[];
-};
-
-/**
- * Which blobs a push has to create. `previous` is the snapshot of the last
- * push; a file whose content is unchanged (same blob id) keeps its blob.
- */
-export async function planPush(previous: FileMap, current: FileMap): Promise<PushPlan> {
-  const known = new Set<string>();
-  for (const data of Object.values(previous)) known.add(await blobSha(data));
-  const entries: PushPlan["entries"] = [];
-  const upload: string[] = [];
-  for (const path of Object.keys(current).sort()) {
-    const data = current[path];
-    if (!data) continue;
-    const sha = await blobSha(data);
-    entries.push({ path, sha });
-    if (!known.has(sha)) {
-      upload.push(path);
-      known.add(sha);
-    }
-  }
-  return { entries, upload };
-}
 
 function isText(data: Uint8Array) {
   const sample = data.subarray(0, 8000);

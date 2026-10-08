@@ -10,6 +10,8 @@ export type HostConfig = {
   freeAgent: { label: string; model: string } | null;
   /** The OAuth app for "Sign in with GitHub"; empty without a host that has one. */
   githubClientId: string;
+  /** The host's relay for git pushes and pulls; empty without a host. */
+  gitProxyUrl: string;
 };
 
 let loaded: Promise<HostConfig> | null = null;
@@ -28,6 +30,7 @@ export function hostConfig(): Promise<HostConfig> {
             ? { label: String(data.freeAgent.label || "Sparkbox"), model: data.freeAgent.model }
             : null,
         githubClientId: typeof data.githubClientId === "string" ? data.githubClientId : "",
+        gitProxyUrl: typeof data.gitProxyUrl === "string" ? data.gitProxyUrl : "",
       };
     })
     .catch(() => ({
@@ -36,6 +39,7 @@ export function hostConfig(): Promise<HostConfig> {
       fetchUrl: "",
       freeAgent: null,
       githubClientId: "",
+      gitProxyUrl: "",
     }));
   return loaded;
 }

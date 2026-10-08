@@ -43,6 +43,24 @@ export class MemorySandbox implements Sandbox {
     return this.files.has(path) || [...this.files.keys()].some((p) => p.startsWith(`${path}/`));
   }
   async mkdir() {}
+  async stat(path: string): Promise<{ kind: "file" | "directory"; size: number } | null> {
+    const file = this.files.get(path);
+    if (file) return { kind: "file", size: file.byteLength };
+    if (!path || [...this.files.keys()].some((p) => p.startsWith(`${path}/`)))
+      return { kind: "directory", size: 0 };
+    return null;
+  }
+  async readDir(path: string): Promise<{ name: string; kind: "file" | "directory" }[]> {
+    const prefix = path ? `${path}/` : "";
+    const seen = new Map<string, "file" | "directory">();
+    for (const file of this.files.keys()) {
+      if (!file.startsWith(prefix)) continue;
+      const rest = file.slice(prefix.length);
+      const name = rest.split("/")[0] ?? "";
+      if (name) seen.set(name, rest.includes("/") ? "directory" : "file");
+    }
+    return [...seen].map(([name, kind]) => ({ name, kind }));
+  }
   async listFiles() {
     return [...this.files.keys()].filter((path) => !isIgnoredPath(path)).sort();
   }

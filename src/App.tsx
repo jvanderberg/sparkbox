@@ -8,17 +8,27 @@ import { Field, Modal } from "./components.tsx";
 import { type HostConfig, hostConfig, relayUrl } from "./config.ts";
 import { GitHubConnect } from "./GitHubConnect.tsx";
 import { GitHubOpen } from "./GitHubOpen.tsx";
+import { startGitBridge } from "./git/bridge.ts";
+import { GitStore } from "./git/fs.ts";
+import { Repository as Git } from "./git/repo.ts";
 import { githubAccount, useGitHubAccount } from "./github/account.ts";
 import type { Repository } from "./github/api.ts";
 import { completeGitHubLogin } from "./github/auth.ts";
+import { createGitHubController } from "./github/controller.ts";
+import { cloneUrl } from "./github/sync.ts";
 import { Loading } from "./Loading.tsx";
 import { defaultPreviewOrigin, previewPort, usePreview } from "./Preview.tsx";
 import { queryPreview } from "./preview-bridge.ts";
-import { deleteSnapshot, listSnapshots, saveBaseline, saveSnapshot } from "./sandbox/storage.ts";
+import {
+  deleteSnapshot,
+  listSnapshots,
+  loadGitStore,
+  saveGitStore,
+  saveSnapshotNow,
+} from "./sandbox/storage.ts";
 import { type SandboxProgress, WasmerSandbox } from "./sandbox/wasmer.ts";
 import { starterTemplate } from "./template.ts";
 import { Workspace } from "./Workspace.tsx";
-import type { FileMap } from "./workspace/changes.ts";
 import "./app.css";
 
 type Project = { id: string; name: string };
@@ -146,11 +156,10 @@ export function App() {
     setOpen({ id, name });
   }
 
-  /** A repository's files become a project that keeps backing up to it. */
-  async function openRepository(repo: Repository, files: FileMap) {
+  /** A repository becomes a project that clones it on first open and keeps backing up to it. */
+  async function openRepository(repo: Repository) {
     const id = projectId(repo.name);
-    await saveSnapshot(id, files);
-    await saveBaseline(id, files);
+    settings.setPendingClone(id, cloneUrl(repo));
     settings.setGithubLink(id, { ...repo, auto: true, pushedAt: new Date().toISOString() });
     const next = [...projects, { id, name: repo.name }];
     setProjects(next);
@@ -430,7 +439,9 @@ export function App() {
                   storeProjects(next);
                   void deleteSnapshot(project.id);
                   void deleteSnapshot(`${project.id}#baseline`);
+                  void deleteSnapshot(`${project.id}#git`);
                   settings.setGithubLink(project.id, null);
+                  settings.setPendingClone(project.id, null);
                 }}
               >
                 Delete
@@ -534,6 +545,7 @@ function ProjectSession({
     sandbox?.setEnvironment(secrets);
   }, [sandbox, secrets]);
   const [runner, setRunner] = useState<AgentRunner | null>(null);
+  const [git, setGit] = useState<Git | null>(null);
   const [progress, setProgress] = useState<SandboxProgress>({ phase: "runtime" });
   const [error, setError] = useState("");
   const origin = settings.previewOrigin() || host?.previewOrigin || defaultPreviewOrigin();
@@ -591,22 +603,70 @@ function ProjectSession({
           })
         : Promise.resolve("");
     let wispUrl = "";
+    // A project opened from GitHub starts empty and is cloned on first boot.
+    const pendingClone = settings.pendingClone(project.id);
+    let repo: Git | null = null;
+    let store: GitStore | null = null;
+    let bridge: { stop: () => Promise<void> } | null = null;
+    // The git objects are persisted whenever they changed; cheap when they did not.
+    const persistGit = () => {
+      if (!store?.dirty) return;
+      store.dirty = false;
+      void saveGitStore(project.id, store.toRecord()).catch((error) =>
+        console.warn("git store save failed", error),
+      );
+    };
+    const gitTimer = setInterval(persistGit, 1500);
     relay
       .then((url) => {
         wispUrl = url;
         return WasmerSandbox.create({
           workspace: project.id,
-          template: starterTemplate(project.name),
+          template: pendingClone ? {} : starterTemplate(project.name),
           wispUrl: wispUrl || undefined,
           onProgress: (value) => {
             if (active) setProgress(value);
           },
         });
       })
-      .then((instance) => {
+      .then(async (instance) => {
         if (!active) return void instance.close({ persist: false });
         created = instance;
         instance.setEnvironment(settings.secrets(project.id));
+        // The repository: restored from IndexedDB, cloned, or created with a first commit.
+        store = new GitStore((await loadGitStore(project.id))?.files ?? {});
+        const author = () => {
+          const login = githubAccount.get()?.login;
+          return login
+            ? { name: login, email: `${login}@users.noreply.github.com` }
+            : { name: "Sparkbox", email: "sparkbox@localhost" };
+        };
+        repo = new Git(instance, store, {
+          author,
+          proxyUrl: () => host.gitProxyUrl,
+          token: () => githubAccount.get()?.token ?? "",
+        });
+        if (pendingClone && !repo.initialized()) {
+          if (active) setProgress({ phase: "cloning" });
+          await repo.clone(pendingClone);
+          settings.setPendingClone(project.id, null);
+          await instance.flush();
+        } else {
+          const fresh = await repo.ensure();
+          if (fresh || !(await repo.head())) await repo.commitAll("Start project");
+        }
+        const link = settings.githubLink(project.id);
+        if (link && (await repo.remote()) !== cloneUrl(link)) await repo.setRemote(cloneUrl(link));
+        persistGit();
+        if (!active) return;
+        const current = repo;
+        bridge = startGitBridge(instance, () => current);
+        const github = createGitHubController({
+          project: project.id,
+          git: () => current,
+          relayUrl: () => host.gitProxyUrl,
+        });
+        setGit(current);
         setSandbox(instance);
         setRunner(
           new AgentRunner({
@@ -621,6 +681,8 @@ function ProjectSession({
             previewPort,
             previewErrors: () => controller.recentErrors(),
             preview: controller,
+            github: github.controller,
+            githubState: github.state,
           }),
         );
       })
@@ -629,7 +691,13 @@ function ProjectSession({
       });
     // Nothing asynchronous runs once the page is hidden or unloading, so
     // the save is issued synchronously from the page's copy of the files.
-    const persist = () => created?.persistNow();
+    const persist = () => {
+      created?.persistNow();
+      if (store?.dirty) {
+        store.dirty = false;
+        saveSnapshotNow(`${project.id}#git`, store.toRecord());
+      }
+    };
     const hidden = () => {
       if (document.visibilityState === "hidden") persist();
     };
@@ -637,13 +705,16 @@ function ProjectSession({
     document.addEventListener("visibilitychange", hidden);
     return () => {
       active = false;
+      clearInterval(gitTimer);
+      persistGit();
       window.removeEventListener("pagehide", persist);
       document.removeEventListener("visibilitychange", hidden);
+      void bridge?.stop();
       void created?.close();
     };
   }, [project.id, project.name, controller, host]);
 
-  if (!sandbox || !runner)
+  if (!sandbox || !runner || !git)
     return <Loading title={project.name} progress={progress} error={error} onBack={onClose} />;
 
   return (
@@ -652,6 +723,7 @@ function ProjectSession({
       sandbox={sandbox}
       runner={runner}
       preview={preview}
+      git={git}
       githubClientId={host?.githubClientId ?? ""}
       onClose={onClose}
       onSettings={onSettings}

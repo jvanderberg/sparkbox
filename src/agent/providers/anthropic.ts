@@ -92,6 +92,7 @@ export class AnthropicSession implements ProviderSession {
           const page = await runPageTool(use.name, input, {
             sandbox: context.sandbox,
             preview: context.preview,
+            github: context.github,
             signal: context.signal,
             fetchProxy: context.fetchProxy,
             secrets: context.secrets,

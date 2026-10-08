@@ -8,13 +8,13 @@ import { CodeEditor } from "./CodeEditor.tsx";
 import { Badge } from "./components.tsx";
 import { FileExplorer } from "./FileExplorer.tsx";
 import { GitHubControls } from "./GitHubControls.tsx";
-import { useGitHubProject } from "./github/use-github-project.ts";
+import type { Repository as Git } from "./git/repo.ts";
+import { useGitHubAccount } from "./github/account.ts";
+import { NeedsAccount, useGitHubProject } from "./github/use-github-project.ts";
 import { MobileMenu } from "./MobileMenu.tsx";
 import { PreviewControls, PreviewPanel, type usePreview } from "./Preview.tsx";
-import { loadBaseline, saveBaseline } from "./sandbox/storage.ts";
 import type { WasmerSandbox } from "./sandbox/wasmer.ts";
 import { useWorkspaceViewport } from "./use-workspace-viewport.ts";
-import { computeChanges, type FileMap } from "./workspace/changes.ts";
 import { FILE_LIMIT, type Changes as WorkspaceChanges } from "./workspace/types.ts";
 
 type WorkspaceView = "files" | "changes" | "agent" | "preview";
@@ -38,6 +38,7 @@ export function Workspace({
   sandbox,
   runner,
   preview,
+  git,
   githubClientId,
   onClose,
   onSettings,
@@ -46,6 +47,8 @@ export function Workspace({
   sandbox: WasmerSandbox;
   runner: AgentRunner;
   preview: ReturnType<typeof usePreview>;
+  /** The project's repository, kept by the page. */
+  git: Git;
   /** The host's GitHub OAuth app, or empty when the user pastes a token. */
   githubClientId: string;
   onClose: () => void;
@@ -95,7 +98,6 @@ export function Workspace({
   const readOnly = loading;
   const current = useRef({ file, text });
   current.current = { file, text };
-  const baseline = useRef<FileMap | null>(null);
   const openSequence = useRef(0);
   const refreshing = useRef<Promise<void> | null>(null);
   const refreshQueued = useRef(false);
@@ -119,12 +121,7 @@ export function Workspace({
       const paths = await sandbox.listFiles();
       setFiles(paths);
       try {
-        if (!baseline.current) {
-          const saved = await loadBaseline(workspace);
-          baseline.current = saved?.files ?? (await sandbox.snapshot());
-          if (!saved) await saveBaseline(workspace, baseline.current);
-        }
-        setChanges(computeChanges(baseline.current, await sandbox.snapshot()));
+        setChanges(await git.changes());
         setChangesError("");
       } catch (cause) {
         setChangesError(cause instanceof Error ? cause.message : "Could not compute changes.");
@@ -159,7 +156,7 @@ export function Workspace({
       }
     })();
     await refreshing.current;
-  }, [sandbox, workspace, readFile]);
+  }, [sandbox, git, readFile]);
 
   // The sandbox reports every write, whether from the editor, the agent's
   // tools or a command. Coalesce bursts into one refresh.
@@ -187,12 +184,13 @@ export function Workspace({
   const github = useGitHubProject({
     project: { id: workspace, name },
     sandbox,
+    git,
     runner,
     secrets: () => settings.secrets(workspace),
-    baseline,
-    onPushed: () => void refreshFiles(),
+    onChanged: () => void refreshFiles(),
     report,
   });
+  const account = useGitHubAccount();
 
   async function open(path: string) {
     if (dirty && !window.confirm("Discard unsaved edits and open another file?")) return false;
@@ -278,14 +276,6 @@ export function Workspace({
     await refreshFiles();
   }
 
-  async function saveVersion(title: string) {
-    const snapshot = await sandbox.snapshot();
-    await saveBaseline(workspace, snapshot);
-    baseline.current = snapshot;
-    setMessage(`Saved version: ${title}`);
-    await refreshFiles();
-  }
-
   return (
     <main
       ref={screen}
@@ -353,8 +343,13 @@ export function Workspace({
           refresh={() => void refreshFiles()}
           dirty={dirty}
           readOnly={readOnly || busy}
-          mode={github.link ? "github" : "save"}
-          onCommit={github.link ? github.backUp : saveVersion}
+          pushes={Boolean(github.link && account)}
+          onCommit={(message) =>
+            github.backUp(message).catch((error: unknown) => {
+              // Without GitHub the commit still happened; that is the point here.
+              if (!(error instanceof NeedsAccount)) throw error;
+            })
+          }
           error={changesError}
         />
       </section>
