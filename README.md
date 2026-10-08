@@ -60,10 +60,10 @@ Create a project, add a key in the Agent panel's Connection settings, and ask fo
 
 ## What works today
 
-- Sandbox boot with persistent project files across reloads (IndexedDB snapshot of `/workspace`).
+- Sandbox boot with persistent project files across reloads (IndexedDB snapshot of `/workspace`). The page keeps its own copy of the files, so the save issued when the tab is hidden or reloaded is complete and needs no sandbox round trip; `node_modules` and build output are never saved, and the preview says so when they are missing.
 - Agent turns against Anthropic, OpenAI and OpenRouter with streaming text, live tool rows, message queueing and Stop.
 - Files, editor with save conflict detection, upload/download, Changes against a saved version, and Preview with an iframe, logs, Reload, Restart and a Server form.
-- Preview runs the command in the project's `sparkbox.json` (command, port, directory); without one it is a static server with live reload. Same-origin WebSockets from preview pages are tunnelled through a bridge process in the sandbox (`scripts/ws-smoke.ts`). Backends run on one port; SQLite through sql.js.
+- Preview runs the command in the project's `sparkbox.json` (command, port, directory); without one it is a static server with live reload. The command runs under a small Node supervisor (`src/sandbox/supervise-script.ts`) that records every Node process it starts and kills them all on Stop, so `node server.js & node .sparkbox/vite.mjs` never leaves a server holding its port. Same-origin WebSockets from preview pages are tunnelled through a bridge process in the sandbox (`scripts/ws-smoke.ts`). Backends run on one port; SQLite through sql.js.
 - Real Vite 7 inside the sandbox (`scripts/vite-smoke.ts`). The sandbox runtime cannot run esbuild, Rollup's parser or WebAssembly, so `.sparkbox/vite.mjs` patches the installed Vite once to load replacements: esbuild calls are forwarded over the process's stdio to esbuild-wasm running in the page (`src/preview/esbuild-service.ts`), which reads and writes project files through the sandbox filesystem and calls plugin hooks back in the sandbox; Rollup's parser becomes acorn and the import lexer its asm.js build. File watching is event-driven: the page reports the exact paths it writes, diffs the workspace after each shell command, and the dev server only falls back to a slow content scan for processes that write files on their own. Vite 8 (Rolldown) is not supported yet.
 - Phone layout with the Civic Spark mobile rules.
 

@@ -36,6 +36,35 @@ async function run(label: string, options: { mobile?: boolean; dark?: boolean })
   await page.getByRole("button", { name: "Create" }).click();
   // On phones the status badge sits inside the collapsed menu.
   await page.getByText("Sandbox ready").waitFor({ state: "attached", timeout: 180_000 });
+  const exec = (command: string) =>
+    page.evaluate(
+      (command) =>
+        (
+          window as unknown as {
+            sparkboxExec: (c: string) => Promise<{ stdout: string; stderr: string }>;
+          }
+        ).sparkboxExec(command),
+      command,
+    );
+  const write = (path: string, content: string) =>
+    page.evaluate(
+      ({ path, content }) =>
+        (
+          window as unknown as { sparkboxWrite: (p: string, c: string) => Promise<void> }
+        ).sparkboxWrite(path, content),
+      { path, content },
+    );
+  // Edits survive a reload that follows them at once: the last write and a
+  // file created by a shell command are both back after the sandbox restarts.
+  await write("kept.txt", "first");
+  await exec("echo via-shell > shell.txt");
+  await write("kept.txt", "second");
+  await page.reload();
+  await page.getByText("Sandbox ready").waitFor({ state: "attached", timeout: 180_000 });
+  const restored = await exec("cat kept.txt shell.txt");
+  if (restored.stdout !== "secondvia-shell\n")
+    throw new Error(`edits were lost over a reload: ${JSON.stringify(restored)}`);
+  console.log(`${label} edits survive an immediate reload`);
   const tabs = page.locator("nav.workspace-tabs");
   if (!options.mobile) {
     // Project secrets: added in Settings, they reach commands as environment
@@ -93,6 +122,34 @@ async function run(label: string, options: { mobile?: boolean; dark?: boolean })
   if (await expand.isVisible()) await expand.click();
   await page.getByRole("treeitem", { name: /index\.html/ }).waitFor({ timeout: 20_000 });
   await page.screenshot({ path: `artifacts/smoke-${label}-files.png` });
+  // The preview command backgrounds a second server, the shape of a Vite app
+  // with an API: stopping the preview has to take that one down too.
+  await write(
+    "bg.js",
+    'require("http").createServer((q, s) => s.end("bg")).listen(3999, "0.0.0.0");',
+  );
+  await write(
+    "probe.mjs",
+    `const net = await import("node:net");
+const out = [];
+for (const port of process.argv.slice(2).map(Number))
+  out.push(port + "=" + await new Promise((resolve) => {
+    const server = net.createServer();
+    server.once("error", () => resolve("busy"));
+    server.listen(port, "0.0.0.0", () => { server.close(); resolve("free"); });
+  }));
+console.log(out.join(" "));`,
+  );
+  await write(
+    "sparkbox.json",
+    JSON.stringify({
+      preview: {
+        command: "node bg.js & node .sparkbox/serve.mjs 8080 .",
+        port: 8080,
+        directory: ".",
+      },
+    }),
+  );
   await tabs.getByRole("button", { name: "Preview" }).click();
   await page.locator(".preview-panel").getByRole("button", { name: "Preview" }).click();
   const frame = page.locator("iframe.preview-frame");
@@ -239,6 +296,24 @@ async function run(label: string, options: { mobile?: boolean; dark?: boolean })
   // The probe frames must not have added errors to the user's preview view.
   if (await page.locator(".preview-page-errors").count())
     throw new Error("probe frames leaked page errors into the panel");
+  const running = await exec("node probe.mjs 3999 8080");
+  if (running.stdout.trim() !== "3999=busy 8080=busy")
+    throw new Error(`preview servers are not listening: ${JSON.stringify(running)}`);
+  // On phones the preview controls live in the workspace menu.
+  const menu = page.getByRole("button", { name: "Workspace controls" });
+  if (await menu.isVisible()) await menu.click();
+  await page.getByRole("button", { name: "Stop preview" }).click();
+  if (await menu.isVisible()) await page.keyboard.press("Escape");
+  const stoppedAt = Date.now();
+  let freed = "";
+  while (Date.now() - stoppedAt < 20_000) {
+    freed = (await exec("node probe.mjs 3999 8080")).stdout.trim();
+    if (freed === "3999=free 8080=free") break;
+    await page.waitForTimeout(500);
+  }
+  if (freed !== "3999=free 8080=free")
+    throw new Error(`stopping the preview left a server running: ${freed}`);
+  console.log(`${label} stopping the preview frees both ports`);
   await tabs.getByRole("button", { name: "Files" }).click();
   if (await expand.isVisible()) await expand.click();
   await page.getByRole("treeitem", { name: /app\.js/ }).click();

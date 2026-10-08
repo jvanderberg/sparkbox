@@ -149,9 +149,9 @@ export function App() {
             <legend>Secrets for {open.name}</legend>
             <p className="muted">
               API keys and tokens the app needs. They stay in this browser, reach every command and
-              the preview server as environment variables, can be written as {`$\{NAME}`} in download
-              URLs, and are redacted from what the agent sees. Tell the agent the name, never the
-              value.
+              the preview server as environment variables, can be written as {`$\{NAME}`} in
+              download URLs, and are redacted from what the agent sees. Tell the agent the name,
+              never the value.
             </p>
             {secretRows.map((row, index) => (
               <div className="secret-row" key={row.id}>
@@ -385,15 +385,18 @@ function ProjectSession({
       sparkboxPreviewTool?: unknown;
       sparkboxExec?: unknown;
       sparkboxWrite?: unknown;
+      sparkboxSandbox?: unknown;
     };
     globals.sparkboxPreviewTool = (request: Parameters<PreviewController["query"]>[0]) =>
       controller.query(request);
     globals.sparkboxExec = (command: string) => sandbox?.exec(command, { timeoutMs: 180_000 });
     globals.sparkboxWrite = (path: string, content: string) => sandbox?.writeFile(path, content);
+    globals.sparkboxSandbox = sandbox;
     return () => {
       globals.sparkboxPreviewTool = undefined;
       globals.sparkboxExec = undefined;
       globals.sparkboxWrite = undefined;
+      globals.sparkboxSandbox = undefined;
     };
   }, [controller, sandbox]);
 
@@ -439,7 +442,9 @@ function ProjectSession({
       .catch((cause: Error) => {
         if (active) setError(cause.message);
       });
-    const persist = () => void created?.persist();
+    // Nothing asynchronous runs once the page is hidden or unloading, so
+    // the save is issued synchronously from the page's copy of the files.
+    const persist = () => created?.persistNow();
     const hidden = () => {
       if (document.visibilityState === "hidden") persist();
     };

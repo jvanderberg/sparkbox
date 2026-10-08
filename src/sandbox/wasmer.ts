@@ -5,7 +5,7 @@ import type {
   Sandbox as WasmerSandboxHandle,
 } from "@wasmer/sdk/browser";
 import { deadline, RuntimeHung } from "./deadline.ts";
-import { loadSnapshot, saveSnapshot } from "./storage.ts";
+import { loadSnapshot, saveSnapshot, saveSnapshotNow } from "./storage.ts";
 import {
   type ExecOptions,
   type ExecResult,
@@ -57,6 +57,10 @@ export type WasmerSandboxOptions = {
 
 export type PreviewServer = { port: number; url: string; close: () => Promise<void> };
 
+function encodeBytes(data: string | Uint8Array): Uint8Array {
+  return typeof data === "string" ? new TextEncoder().encode(data) : data;
+}
+
 /** The SDK's worker pool can die; commands then fail until the sandbox is rebuilt. */
 export function isDeadRuntime(error: unknown) {
   if (error instanceof RuntimeHung) return true;
@@ -86,6 +90,17 @@ export class WasmerSandbox implements Sandbox {
   /** Content digest per workspace path, the baseline for change detection. */
   private digests = new Map<string, string>();
   private digestsSeeded = false;
+  /**
+   * The workspace files as last seen by the page, excluding ignored
+   * directories. Writes through this object update it at once and shell
+   * commands refresh it when they finish, so it is what gets persisted:
+   * saving never has to wait on the sandbox worker, and the copy issued
+   * while the page unloads is complete.
+   */
+  private mirror = new Map<string, Uint8Array>();
+  /** Scans in progress, and what was written through this object meanwhile. */
+  private scans = 0;
+  private touchedDuringScan = new Map<string, Uint8Array | null>();
   private restartListeners = new Set<() => void>();
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
   private saving: Promise<void> | null = null;
@@ -125,6 +140,8 @@ export class WasmerSandbox implements Sandbox {
       Boolean(snapshot),
       options.wispUrl,
     );
+    for (const [path, data] of Object.entries(files))
+      if (!isIgnoredPath(path)) sandbox.mirror.set(path, encodeBytes(data));
     sandbox.watchForWorkerFailures();
     return sandbox;
   }
@@ -214,11 +231,11 @@ export class WasmerSandbox implements Sandbox {
     this.restarting = (async () => {
       let files: Record<string, Uint8Array> = {};
       try {
-        // The filesystem usually still answers after the pool died; the saved
-        // snapshot is the fallback when it does not.
+        // The filesystem usually still answers after the pool died; the
+        // page's mirror of the files is the fallback when it does not.
         files = await deadline(this.snapshot(), 20_000, "read the project files");
       } catch {
-        files = (await loadSnapshot(this.workspace))?.files ?? {};
+        files = this.mirrorFiles();
       }
       for (const server of this.servers.values()) await server.close().catch(() => {});
       this.servers.clear();
@@ -337,8 +354,8 @@ export class WasmerSandbox implements Sandbox {
           idleSince = Date.now();
         } else if (Date.now() - idleSince > 500) break;
       }
-      this.changed();
       await this.detectChanges().catch(() => {});
+      this.changed();
       return {
         stdout: partial.stdout,
         stderr: partial.stderr,
@@ -365,7 +382,9 @@ export class WasmerSandbox implements Sandbox {
       await this.handle.fs.writeFile(this.absolute(path), data);
     });
     if (!isIgnoredPath(path)) {
-      const bytes = typeof data === "string" ? new TextEncoder().encode(data) : data;
+      const bytes = encodeBytes(data);
+      this.mirror.set(path, bytes);
+      if (this.scans) this.touchedDuringScan.set(path, bytes);
       this.digests.set(path, digest(bytes));
       this.emitFileChanges(existed ? { changed: [path] } : { added: [path] });
     }
@@ -377,6 +396,11 @@ export class WasmerSandbox implements Sandbox {
       (known) => known === path || known.startsWith(`${path}/`),
     );
     for (const known of removed) this.digests.delete(known);
+    for (const known of this.mirror.keys())
+      if (known === path || known.startsWith(`${path}/`)) {
+        this.mirror.delete(known);
+        if (this.scans) this.touchedDuringScan.set(known, null);
+      }
     if (removed.length) this.emitFileChanges({ removed });
     this.changed();
   }
@@ -445,8 +469,7 @@ export class WasmerSandbox implements Sandbox {
   /** Compare every workspace file with the known digests and report the differences. */
   async detectChanges() {
     const current = new Map<string, string>();
-    for (const path of await this.listFiles())
-      if (!isIgnoredPath(path)) current.set(path, digest(await this.readFile(path)));
+    await this.scan((path, data) => current.set(path, digest(data)));
     const added: string[] = [];
     const changed: string[] = [];
     const removed: string[] = [];
@@ -462,22 +485,56 @@ export class WasmerSandbox implements Sandbox {
     this.digestsSeeded = true;
   }
 
-  /** Everything under the workspace except ignored directories, for persistence. */
+  /** Everything under the workspace except ignored directories, read from the sandbox. */
   async snapshot(): Promise<Record<string, Uint8Array>> {
-    const files: Record<string, Uint8Array> = {};
-    for (const path of await this.listFiles())
-      if (!isIgnoredPath(path)) files[path] = await this.readFile(path);
-    return files;
+    return Object.fromEntries(await this.scan());
   }
 
-  /** Persist now, waiting for any in-flight save first. */
+  /**
+   * Read every workspace file and make the result the new mirror. A write
+   * through this object that lands while the scan runs may be newer than
+   * what the scan read for that path, so those paths keep the written bytes.
+   */
+  private async scan(visit?: (path: string, data: Uint8Array) => void) {
+    this.scans++;
+    try {
+      const mirror = new Map<string, Uint8Array>();
+      for (const path of await this.listFiles())
+        if (!isIgnoredPath(path)) {
+          const data = await this.readFile(path);
+          mirror.set(path, data);
+          visit?.(path, data);
+        }
+      for (const [path, data] of this.touchedDuringScan)
+        if (data) mirror.set(path, data);
+        else mirror.delete(path);
+      this.mirror = mirror;
+      return mirror;
+    } finally {
+      this.scans--;
+      if (!this.scans) this.touchedDuringScan.clear();
+    }
+  }
+
+  private mirrorFiles(): Record<string, Uint8Array> {
+    return Object.fromEntries(this.mirror);
+  }
+
+  /**
+   * Persist now, waiting for any in-flight save first. A running server may
+   * have written files the page has not seen (a database file, say), so the
+   * mirror is refreshed from the sandbox first while any process is alive.
+   */
   async persist() {
     if (this.saveTimer) {
       clearTimeout(this.saveTimer);
       this.saveTimer = null;
     }
     if (this.saving) await this.saving;
-    this.saving = saveSnapshot(this.workspace, await this.snapshot()).finally(() => {
+    this.saving = (async () => {
+      if (this.processes.size) await this.detectChanges().catch(() => {});
+      await saveSnapshot(this.workspace, this.mirrorFiles());
+    })().finally(() => {
       this.saving = null;
     });
     await this.saving;
@@ -486,13 +543,28 @@ export class WasmerSandbox implements Sandbox {
     return this.persist();
   }
 
+  /**
+   * Persist from the mirror without waiting for anything, for the moments
+   * when the page is hidden or unloading and no asynchronous work will get
+   * to run. Falls back to a regular save when the database is not open.
+   */
+  persistNow() {
+    if (this.saveTimer) {
+      clearTimeout(this.saveTimer);
+      this.saveTimer = null;
+    }
+    const issued = saveSnapshotNow(this.workspace, this.mirrorFiles());
+    if (issued) issued.catch((error) => console.warn("workspace save failed", error));
+    else void this.persist().catch((error) => console.warn("workspace save failed", error));
+  }
+
   private changed() {
     for (const listener of this.listeners) listener();
     if (this.saveTimer) clearTimeout(this.saveTimer);
     this.saveTimer = setTimeout(() => {
       this.saveTimer = null;
       void this.persist().catch((error) => console.warn("workspace save failed", error));
-    }, 1500);
+    }, 500);
   }
 
   /** Start a long-running command (a dev server) and keep it until stopped. */

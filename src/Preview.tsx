@@ -22,6 +22,12 @@ import esbuildShim from "./sandbox/guest/esbuild-shim.js?raw";
 import rollupParseAst from "./sandbox/guest/rollup-parse-ast.js?raw";
 import viteLauncher from "./sandbox/guest/vite-launcher.mjs?raw";
 import { serveScript } from "./sandbox/serve-script.ts";
+import {
+  registerPath,
+  registerScript,
+  supervisePath,
+  superviseScript,
+} from "./sandbox/supervise-script.ts";
 import type { WasmerSandbox } from "./sandbox/wasmer.ts";
 import { wsBridgeScript } from "./sandbox/ws-bridge-script.ts";
 import "./preview.css";
@@ -43,6 +49,33 @@ export function defaultPreviewOrigin() {
 
 type Tunnel = { write: (line: string) => Promise<void>; kill: () => Promise<void> };
 type TunnelRoute = { source: Window; origin: string; pageId: number };
+
+/** Quote a string as one bash word. */
+function shellWord(value: string) {
+  return `'${value.replaceAll("'", "'\\''")}'`;
+}
+
+export const missingDependenciesNote =
+  "node_modules is missing: installed packages are not kept across page reloads. Run pnpm install and start the preview again.";
+
+/** True when package.json declares packages but nothing is installed. */
+async function dependenciesMissing(sandbox: WasmerSandbox) {
+  if (!(await sandbox.exists("package.json")) || (await sandbox.exists("node_modules")))
+    return false;
+  try {
+    const parsed = JSON.parse(await sandbox.readText("package.json")) as {
+      dependencies?: Record<string, string>;
+      devDependencies?: Record<string, string>;
+    };
+    return (
+      Object.keys(parsed.dependencies ?? {}).length +
+        Object.keys(parsed.devDependencies ?? {}).length >
+      0
+    );
+  } catch {
+    return false;
+  }
+}
 
 export function usePreview(sandbox: WasmerSandbox | null, origin: string) {
   const [url, setUrl] = useState("");
@@ -276,6 +309,14 @@ export function usePreview(sandbox: WasmerSandbox | null, origin: string) {
         const current = await readPreviewConfig(sandbox);
         setConfig(current);
         configRef.current = current;
+        if (await dependenciesMissing(sandbox)) {
+          // Reaches the panel and the agent's next turn; the command still runs.
+          setLogs(`${missingDependenciesNote}\n`);
+          logsRef.current = `${missingDependenciesNote}\n`;
+          setPageErrors([missingDependenciesNote]);
+        }
+        await sandbox.writeFile(supervisePath, superviseScript);
+        await sandbox.writeFile(registerPath, registerScript);
         await sandbox.writeFile(".sparkbox/serve.mjs", serveScript);
         await sandbox.writeFile(".sparkbox/ws-bridge.mjs", wsBridgeScript);
         await sandbox.writeFile(".sparkbox/esbuild-shim.js", esbuildShim);
@@ -292,8 +333,10 @@ export function usePreview(sandbox: WasmerSandbox | null, origin: string) {
         const env = `SPARKBOX=1 ${host ? `__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS=${host} ` : ""}`;
         // Guest tools (Vite's esbuild replacement) call into the page over stdio.
         let service: EsbuildService | null = null;
+        // The supervisor kills every process the command started when the
+        // preview stops, so a backgrounded server never keeps its port.
         const started = await sandbox.start(
-          `${env}${current.command}`,
+          `node ${supervisePath} ${shellWord(`${env}${current.command}`)}`,
           (chunk) =>
             setLogs((text) => {
               const next = (text + chunk).slice(-20_000);
@@ -350,7 +393,9 @@ export function usePreview(sandbox: WasmerSandbox | null, origin: string) {
     await pipe?.kill().catch(() => {});
     setUrl("");
     urlRef.current = "";
-    if (current) await current.kill().catch(() => {});
+    // A termination signal lets the supervisor clean up its children; the
+    // sandbox forces the kill if it does not exit in time.
+    if (current) await current.terminate({ gracePeriodMs: 5000 }).catch(() => {});
     setRunning(false);
   }
 
