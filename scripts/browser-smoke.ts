@@ -37,6 +37,25 @@ async function run(label: string, options: { mobile?: boolean; dark?: boolean })
   // On phones the status badge sits inside the collapsed menu.
   await page.getByText("Sandbox ready").waitFor({ state: "attached", timeout: 180_000 });
   const tabs = page.locator("nav.workspace-tabs");
+  if (!options.mobile) {
+    // Project secrets: added in Settings, they reach commands as environment
+    // variables as soon as they are saved.
+    // The preview panel has its own Settings button; the workspace header's opens the app settings.
+    await page.locator("header").getByRole("button", { name: "Settings" }).first().click();
+    await page.getByRole("button", { name: "Add secret" }).click();
+    await page.getByLabel("Secret 1 name").fill("SMOKE_SECRET");
+    await page.getByLabel("Secret 1 value").fill("smoke-secret-value");
+    await page.getByRole("button", { name: "Save" }).click();
+    await page.getByRole("button", { name: "Add secret" }).waitFor({ state: "detached" });
+    const secret = await page.evaluate(() =>
+      (
+        window as unknown as { sparkboxExec: (c: string) => Promise<{ stdout: string }> }
+      ).sparkboxExec("echo secret=$SMOKE_SECRET"),
+    );
+    if (!secret.stdout.includes("secret=smoke-secret-value"))
+      throw new Error(`secret did not reach the command environment: ${secret.stdout}`);
+    console.log(`${label} project secret reaches the environment`);
+  }
   // A large photo-sized PNG attaches without a size complaint: it is downscaled.
   const bigImage = await page.evaluate(async () => {
     const canvas = document.createElement("canvas");

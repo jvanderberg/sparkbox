@@ -386,6 +386,7 @@ body:has(.workspace-screen) {
   :root
     :is(
       .field input,
+      .secret-row input,
       .field select,
       .field textarea,
       .event-picker select,

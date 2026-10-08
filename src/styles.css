@@ -1076,6 +1076,7 @@ h2 {
   font-weight: 550;
 }
 .field input,
+.secret-row input,
 .field select,
 .share-row input {
   border: 1px solid #d9e1cf;

@@ -90,3 +90,37 @@
   gap: 6px;
   color: var(--app-text);
 }
+
+/* Project secrets in Settings */
+.secrets {
+  border: 1px solid var(--border, rgba(127, 127, 127, 0.35));
+  border-radius: 8px;
+  padding: 0.75rem;
+  margin: 0 0 1rem;
+  display: grid;
+  gap: 0.5rem;
+}
+.secrets legend {
+  font-weight: 600;
+  padding: 0 0.25rem;
+}
+.secret-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) auto;
+  gap: 0.5rem;
+  align-items: center;
+}
+.secret-row input {
+  min-width: 0;
+  font-size: 16px;
+  min-height: 44px;
+}
+.form-error {
+  color: var(--danger, #b42318);
+  margin: 0;
+}
+@media (max-width: 480px) {
+  .secret-row {
+    grid-template-columns: 1fr;
+  }
+}

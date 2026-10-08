@@ -11,6 +11,8 @@ export function systemPrompt(options: {
   files: string[];
   networkEnabled: boolean;
   previewPort: number;
+  /** Names of the project secrets the user stored in Settings. */
+  secretNames?: string[];
   projectBrief?: string;
   previewErrors?: string[];
 }) {
@@ -62,6 +64,11 @@ ${network}
 - Output that node or pnpm writes into a pipe is lost here (for example "node x.js | head" shows nothing). Redirect to a file instead ("node x.js > out.txt 2>&1; tail out.txt") or let the output print directly.
 - If a command fails with an error mentioning the scheduler or thread pool, the sandbox runtime restarts itself; retry the command once.
 - Keep credentials out of project files and responses. Never try to read browser storage or anything outside /workspace.
+${
+  options.secretNames?.length
+    ? `- Secrets: the user stored these in Settings, and they are environment variables in every command and in the preview server: ${options.secretNames.join(", ")}. Read them with process.env.NAME (Vite exposes VITE_-prefixed ones as import.meta.env.NAME to the page). In a download URL write \${NAME} and Sparkbox substitutes the value. Never print a secret or write it into a file; tool output that contains one is redacted to [NAME]. Ask the user to add a secret in Settings rather than to paste it into the chat.`
+    : `- Secrets: when the app needs an API key or token, ask the user to add it under Settings → Secrets (it becomes an environment variable and can be used as \${NAME} in download URLs) rather than pasting it into the chat.`
+}
 ${toolNotes}
 
 Build

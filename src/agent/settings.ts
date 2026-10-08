@@ -54,6 +54,24 @@ export const settings = {
   setPreviewOrigin(value: string) {
     write("preview-origin", value.trim());
   },
+  /** Project secrets: environment variables for commands and the preview, redacted from tool output. */
+  secrets(project: string): Record<string, string> {
+    try {
+      const parsed = JSON.parse(read(`secrets:${project}`) || "{}") as unknown;
+      if (!parsed || typeof parsed !== "object") return {};
+      return Object.fromEntries(
+        Object.entries(parsed as Record<string, unknown>).filter(
+          (entry): entry is [string, string] => typeof entry[1] === "string",
+        ),
+      );
+    } catch {
+      return {};
+    }
+  },
+  setSecrets(project: string, value: Record<string, string>) {
+    const entries = Object.entries(value).filter(([name, secret]) => name && secret);
+    write(`secrets:${project}`, entries.length ? JSON.stringify(Object.fromEntries(entries)) : "");
+  },
   configuredProviders(): ProviderId[] {
     return (Object.keys(providers) as ProviderId[]).filter((provider) =>
       Boolean(this.key(provider)),

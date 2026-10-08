@@ -28,6 +28,10 @@ Besides each provider's native file and shell tools, the agent gets two tools th
 
 Keys are stored only in this browser and are sent only to that provider. All three providers accept browser requests directly, so no proxy is involved. Usage is billed to the user's own account.
 
+## Project secrets
+
+API keys and tokens the app itself needs (a transit API key, say) go under Settings → Secrets while a project is open, not into the chat. They stay in this browser's localStorage, become environment variables in every command and in the preview server (so Vite exposes `VITE_`-prefixed ones to the page), can be written as `${NAME}` in download tool URLs, and are redacted to `[NAME]` in every tool output the model sees. The agent is told the names only.
+
 ## Hosted on Fly
 
 The deployed site is https://sparkbox.fly.dev. One small Fly machine runs `server/main.ts`, which:

@@ -14,6 +14,7 @@ import {
   type ProviderSession,
   type ToolDetails,
 } from "./providers/types.ts";
+import { withSecrets } from "./secrets.ts";
 import { settings } from "./settings.ts";
 import { systemPrompt } from "./system-prompt.ts";
 
@@ -37,6 +38,8 @@ export type RunnerOptions = {
   networkEnabled: () => boolean;
   /** The host fetch proxy and the invite token, when both exist. */
   fetchProxy?: () => { url: string; token: string } | undefined;
+  /** Project secrets: redacted from what the model sees, substituted in download URLs. */
+  secrets?: () => Record<string, string>;
   previewPort: number;
   /** Errors the preview page reported since it was started, oldest first. */
   previewErrors?: () => string[];
@@ -210,9 +213,11 @@ export class AgentRunner {
       const brief = files.includes("PROJECT.md")
         ? await this.options.sandbox.readText("PROJECT.md").catch(() => undefined)
         : undefined;
+      const secrets = this.options.secrets?.() ?? {};
       const system = systemPrompt({
         provider,
         files,
+        secretNames: Object.keys(secrets),
         networkEnabled: this.options.networkEnabled(),
         previewPort: this.options.previewPort,
         projectBrief: brief?.slice(0, 8000),
@@ -221,11 +226,12 @@ export class AgentRunner {
       await session.run(
         { text: message.text, images: message.images },
         {
-          sandbox: this.options.sandbox,
+          sandbox: withSecrets(this.options.sandbox, secrets),
           signal: controller.signal,
           system,
           preview: this.options.preview,
           fetchProxy: this.options.fetchProxy?.(),
+          secrets,
           sink: {
             text: (id, delta) => {
               if (!controller.signal.aborted) this.emit({ type: "text", id, text: delta });

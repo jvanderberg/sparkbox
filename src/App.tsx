@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { completeOpenRouterLogin } from "./agent/openrouter-auth.ts";
 import type { PreviewController } from "./agent/preview-controller.ts";
 import { AgentRunner } from "./agent/runner.ts";
+import { isSecretName } from "./agent/secrets.ts";
 import { settings } from "./agent/settings.ts";
 import { Field, Modal } from "./components.tsx";
 import { type HostConfig, hostConfig } from "./config.ts";
@@ -43,6 +44,26 @@ export function App() {
     settings.previewOrigin() || defaultPreviewOrigin(),
   );
   const [newName, setNewName] = useState("");
+  // Project secrets edited in Settings; the open session re-reads them on save.
+  const [secretRows, setSecretRows] = useState<{ id: number; name: string; value: string }[]>([]);
+  const nextRowId = useRef(1);
+  const [secrets, setSecrets] = useState<Record<string, string>>(() =>
+    open ? settings.secrets(open.id) : {},
+  );
+  const [secretsError, setSecretsError] = useState("");
+  useEffect(() => {
+    if (!settingsOpen) return;
+    setSecretsError("");
+    setSecretRows(
+      open
+        ? Object.entries(settings.secrets(open.id)).map(([name, value]) => ({
+            id: nextRowId.current++,
+            name,
+            value,
+          }))
+        : [],
+    );
+  }, [settingsOpen, open]);
 
   useEffect(() => {
     void completeOpenRouterLogin()
@@ -84,6 +105,7 @@ export function App() {
     setProjects(next);
     storeProjects(next);
     setNewName("");
+    setSecrets(settings.secrets(id));
     setOpen({ id, name });
   }
 
@@ -93,12 +115,94 @@ export function App() {
         className="modal-body"
         onSubmit={(event) => {
           event.preventDefault();
+          if (open) {
+            const rows = secretRows
+              .map((row) => ({ name: row.name.trim(), value: row.value }))
+              .filter((row) => row.name || row.value);
+            const invalid = rows.find((row) => !isSecretName(row.name));
+            if (invalid) {
+              setSecretsError(
+                `"${invalid.name || "(empty)"}" is not a valid name: use letters, digits and underscores, like API_KEY.`,
+              );
+              return;
+            }
+            if (rows.some((row) => !row.value)) {
+              setSecretsError("Every secret needs a value.");
+              return;
+            }
+            const saved = Object.fromEntries(rows.map((r) => [r.name, r.value]));
+            settings.setSecrets(open.id, saved);
+            setSecrets(saved);
+          }
           settings.setWispUrl(wisp);
           settings.setPreviewOrigin(previewOrigin);
           setSettingsOpen(false);
-          setNotice("Settings saved. They apply the next time a project is opened.");
+          setNotice(
+            open
+              ? "Settings saved. Secrets apply to new commands now; the preview origin and relay apply the next time a project is opened."
+              : "Settings saved. They apply the next time a project is opened.",
+          );
         }}
       >
+        {open && (
+          <fieldset className="secrets">
+            <legend>Secrets for {open.name}</legend>
+            <p className="muted">
+              API keys and tokens the app needs. They stay in this browser, reach every command and
+              the preview server as environment variables, can be written as {`$\{NAME}`} in download
+              URLs, and are redacted from what the agent sees. Tell the agent the name, never the
+              value.
+            </p>
+            {secretRows.map((row, index) => (
+              <div className="secret-row" key={row.id}>
+                <input
+                  aria-label={`Secret ${index + 1} name`}
+                  placeholder="VITE_API_KEY"
+                  value={row.name}
+                  onChange={(event) =>
+                    setSecretRows((rows) =>
+                      rows.map((r, i) => (i === index ? { ...r, name: event.target.value } : r)),
+                    )
+                  }
+                />
+                <input
+                  aria-label={`Secret ${index + 1} value`}
+                  type="password"
+                  autoComplete="off"
+                  placeholder="value"
+                  value={row.value}
+                  onChange={(event) =>
+                    setSecretRows((rows) =>
+                      rows.map((r, i) => (i === index ? { ...r, value: event.target.value } : r)),
+                    )
+                  }
+                />
+                <button
+                  type="button"
+                  className="button small"
+                  aria-label={`Remove secret ${index + 1}`}
+                  onClick={() => setSecretRows((rows) => rows.filter((_, i) => i !== index))}
+                >
+                  Remove
+                </button>
+              </div>
+            ))}
+            <button
+              type="button"
+              className="button small"
+              onClick={() =>
+                setSecretRows((rows) => [...rows, { id: nextRowId.current++, name: "", value: "" }])
+              }
+            >
+              Add secret
+            </button>
+            {secretsError && (
+              <p className="form-error" role="alert">
+                {secretsError}
+              </p>
+            )}
+          </fieldset>
+        )}
         <Field label="Preview origin">
           <input
             value={previewOrigin}
@@ -136,6 +240,7 @@ export function App() {
         <ProjectSession
           key={open.id}
           project={open}
+          secrets={secrets}
           onClose={() => setOpen(null)}
           onSettings={() => setSettingsOpen(true)}
         />
@@ -165,7 +270,14 @@ export function App() {
         <ul className="project-list">
           {projects.map((project) => (
             <li key={project.id}>
-              <button type="button" className="project-open" onClick={() => setOpen(project)}>
+              <button
+                type="button"
+                className="project-open"
+                onClick={() => {
+                  setSecrets(settings.secrets(project.id));
+                  setOpen(project);
+                }}
+              >
                 {project.name}
               </button>
               <button
@@ -230,12 +342,18 @@ function ProjectSession({
   project,
   onClose,
   onSettings,
+  secrets,
 }: {
   project: Project;
   onClose: () => void;
   onSettings: () => void;
+  secrets: Record<string, string>;
 }) {
   const [sandbox, setSandbox] = useState<WasmerSandbox | null>(null);
+  // Secrets reach every command and the preview server as environment variables.
+  useEffect(() => {
+    sandbox?.setEnvironment(secrets);
+  }, [sandbox, secrets]);
   const [runner, setRunner] = useState<AgentRunner | null>(null);
   const [progress, setProgress] = useState<SandboxProgress>({ phase: "runtime" });
   const [error, setError] = useState("");
@@ -300,6 +418,7 @@ function ProjectSession({
       .then((instance) => {
         if (!active) return void instance.close({ persist: false });
         created = instance;
+        instance.setEnvironment(settings.secrets(project.id));
         setSandbox(instance);
         setRunner(
           new AgentRunner({
@@ -310,6 +429,7 @@ function ProjectSession({
               const token = settings.key("sparkbox");
               return host.fetchUrl && token ? { url: host.fetchUrl, token } : undefined;
             },
+            secrets: () => settings.secrets(project.id),
             previewPort,
             previewErrors: () => controller.recentErrors(),
             preview: controller,

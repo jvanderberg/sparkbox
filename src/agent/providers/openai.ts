@@ -158,6 +158,7 @@ export class OpenAISession implements ProviderSession {
             preview: context.preview,
             signal: context.signal,
             fetchProxy: context.fetchProxy,
+            secrets: context.secrets,
           }).catch(
             (error): ToolOutcome => ({
               output: error instanceof Error ? error.message : String(error),
