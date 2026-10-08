@@ -75,7 +75,7 @@ const SPAWN_DEADLINE_MS = 30_000;
 const EXIT_GRACE_MS = 30_000;
 /** Appended to the output of a command that was interrupted by a runtime rebuild. */
 export const restartedNotice =
-  "[the sandbox runtime stopped responding and was rebuilt; project files are intact, but dependencies must be reinstalled (pnpm install) and the preview started again]";
+  "[the sandbox runtime stopped responding and was rebuilt; project files are intact, but node_modules is gone: start the preview again (it reinstalls dependencies) or run pnpm install]";
 
 type Boot = { client: WasmerClient; handle: WasmerSandboxHandle };
 
@@ -252,6 +252,11 @@ export class WasmerSandbox implements Sandbox {
       this.restarting = null;
     });
     return this.restarting;
+  }
+
+  /** True when commands can reach the internet through a relay. */
+  get hasNetwork() {
+    return Boolean(this.wispUrl);
   }
 
   /** Environment variables added to every command and preview server from now on. */

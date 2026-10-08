@@ -236,6 +236,19 @@ button.addEventListener("click", () => {
 });
 `,
   );
+  // A project with dependencies but no node_modules: the preview installs
+  // them itself when it can; without a network relay it says so and stops.
+  await write(
+    "package.json",
+    JSON.stringify({ name: "smoke", dependencies: { "left-pad": "1.3.0" } }),
+  );
+  await page.locator(".preview-panel").getByRole("button", { name: "Preview" }).click();
+  await page
+    .getByRole("alert")
+    .filter({ hasText: "cannot be reinstalled here" })
+    .waitFor({ timeout: 30_000 });
+  await exec("rm package.json");
+  console.log(`${label} missing node_modules without a relay is explained`);
   await tabs.getByRole("button", { name: "Files" }).click();
   // Phones start with the explorer collapsed to a rail.
   const expand = page.getByRole("button", { name: "Show file explorer" });
@@ -476,7 +489,9 @@ console.log(out.join(" "));`,
   const gitLog = await exec("git log --oneline -n 3");
   if (!gitLog.stdout.includes("Start project") || gitLog.exitCode !== 0)
     throw new Error(`git in the sandbox did not answer: ${JSON.stringify(gitLog)}`);
-  const gitStatus = await exec("echo // more >> app.js && git status --short && git diff --name-only");
+  const gitStatus = await exec(
+    "echo // more >> app.js && git status --short && git diff --name-only",
+  );
   if (!gitStatus.stdout.includes(" M app.js"))
     throw new Error(`git status missed an edit: ${JSON.stringify(gitStatus)}`);
   const gitCommit = await exec('git commit -am "Agent edit" && git push');

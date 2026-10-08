@@ -57,7 +57,9 @@ function shellWord(value: string) {
 }
 
 export const missingDependenciesNote =
-  "node_modules is missing: installed packages are not kept across page reloads. Run pnpm install and start the preview again.";
+  "node_modules is missing: installed packages are not kept across page reloads, and without the network relay (Settings) they cannot be reinstalled here.";
+export const installFailedNote = "Installing dependencies failed; see the preview logs.";
+const installCommand = "pnpm install --ignore-scripts";
 
 /** True when package.json declares packages but nothing is installed. */
 async function dependenciesMissing(sandbox: WasmerSandbox) {
@@ -92,6 +94,7 @@ export function usePreview(sandbox: WasmerSandbox | null, origin: string) {
   const [url, setUrl] = useState("");
   const [running, setRunning] = useState(false);
   const [starting, setStarting] = useState(false);
+  const [installing, setInstalling] = useState(false);
   const [logs, setLogs] = useState("");
   const [error, setError] = useState("");
   const [ports, setPorts] = useState<number[]>([]);
@@ -155,7 +158,7 @@ export function usePreview(sandbox: WasmerSandbox | null, origin: string) {
       setError("The sandbox runtime restarted. Start the preview again.");
       setPageErrors((errors) => [
         ...errors,
-        "The sandbox runtime was rebuilt: reinstall dependencies (pnpm install) and start the preview again.",
+        "The sandbox runtime was rebuilt: start the preview again (it reinstalls dependencies).",
       ]);
     });
   }, [sandbox]);
@@ -323,10 +326,41 @@ export function usePreview(sandbox: WasmerSandbox | null, origin: string) {
         configRef.current = current;
         if (await nothingToServe(sandbox, current)) throw new Error(nothingToPreview);
         if (await dependenciesMissing(sandbox)) {
-          // Reaches the panel and the agent's next turn; the command still runs.
-          setLogs(`${missingDependenciesNote}\n`);
-          logsRef.current = `${missingDependenciesNote}\n`;
-          setPageErrors([missingDependenciesNote]);
+          // Installed packages do not survive a reload or a runtime rebuild;
+          // put them back here rather than leaving it to the agent.
+          if (!sandbox.hasNetwork) {
+            setPageErrors([missingDependenciesNote]);
+            throw new Error(missingDependenciesNote);
+          }
+          setInstalling(true);
+          const append = (chunk: string) =>
+            setLogs((text) => {
+              const next = (text + chunk).slice(-20_000);
+              logsRef.current = next;
+              return next;
+            });
+          append(`$ ${installCommand}\n`);
+          let result: Awaited<ReturnType<typeof sandbox.exec>>;
+          try {
+            result = await sandbox.exec(installCommand, {
+              timeoutMs: 10 * 60_000,
+              onOutput: append,
+            });
+          } finally {
+            setInstalling(false);
+          }
+          if (result.exitCode !== 0) {
+            const tail = `${result.stdout}\n${result.stderr}`
+              .trim()
+              .split("\n")
+              .slice(-12)
+              .join("\n");
+            setPageErrors([`${installFailedNote}\n${tail}`]);
+            throw new Error(
+              `${installCommand} exited with code ${result.exitCode}${result.timedOut ? " (timed out)" : ""}. See Logs.`,
+            );
+          }
+          append("Dependencies installed.\n");
         }
         await sandbox.writeFile(supervisePath, superviseScript);
         await sandbox.writeFile(registerPath, registerScript);
@@ -443,6 +477,7 @@ export function usePreview(sandbox: WasmerSandbox | null, origin: string) {
     url,
     running,
     starting,
+    installing,
     logs,
     error,
     ports,
@@ -503,7 +538,8 @@ export function PreviewControls({
           }}
           disabled={disabled || preview.starting}
         >
-          <Play size={14} /> {preview.starting ? "Starting…" : "Preview"}
+          <Play size={14} />{" "}
+          {preview.installing ? "Installing…" : preview.starting ? "Starting…" : "Preview"}
         </button>
       )}
       {preview.url && (
@@ -675,10 +711,12 @@ export function PreviewPanel({
         />
       ) : (
         <div className="preview-empty">
-          <p>
-            {preview.running || preview.starting
-              ? "Waiting for the server…"
-              : "Start the preview to see your app here."}
+          <p role="status">
+            {preview.installing
+              ? "Installing dependencies… node_modules is not kept between sessions, so this runs once per visit and can take a minute or two."
+              : preview.running || preview.starting
+                ? "Waiting for the server…"
+                : "Start the preview to see your app here."}
           </p>
           <button
             type="button"
@@ -686,7 +724,8 @@ export function PreviewPanel({
             onClick={() => void preview.start().catch(() => {})}
             disabled={preview.starting || preview.running}
           >
-            <Play size={14} /> {preview.starting ? "Starting…" : "Preview"}
+            <Play size={14} />{" "}
+            {preview.installing ? "Installing…" : preview.starting ? "Starting…" : "Preview"}
           </button>
         </div>
       )}

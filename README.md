@@ -75,7 +75,7 @@ Create a project, add a key in the Agent panel's Connection settings, and ask fo
 
 ## What works today
 
-- Sandbox boot with persistent project files across reloads (IndexedDB snapshot of `/workspace`). The page keeps its own copy of the files, so the save issued when the tab is hidden or reloaded is complete and needs no sandbox round trip; `node_modules` and build output are never saved, and the preview says so when they are missing.
+- Sandbox boot with persistent project files across reloads (IndexedDB snapshot of `/workspace`). The page keeps its own copy of the files, so the save issued when the tab is hidden or reloaded is complete and needs no sandbox round trip; `node_modules` and build output are never saved. When the preview starts and `package.json` declares packages that are not installed, it runs `pnpm install --ignore-scripts` itself first, shows "Installing dependencies…" with the output in Logs, and then starts the command; without a network relay it explains that the packages cannot be reinstalled.
 - Agent turns against Anthropic, OpenAI and OpenRouter with streaming text, live tool rows, message queueing and Stop.
 - Files, editor with save conflict detection, upload/download, Changes against HEAD with a commit form, and Preview with an iframe, logs, Reload, Restart and a Server form.
 - git in every project, a `git` command for the agent, Back up and Publish to the user's GitHub account, and Open from GitHub (`scripts/browser-smoke.ts` pushes, runs git from the sandbox and clones against a local git server standing in for github.com, with the API faked).
