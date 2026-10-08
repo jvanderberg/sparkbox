@@ -57,7 +57,8 @@ Create a project, add a key in the Agent panel's Connection settings, and ask fo
 
 - Sandbox boot with persistent project files across reloads (IndexedDB snapshot of `/workspace`).
 - Agent turns against Anthropic, OpenAI and OpenRouter with streaming text, live tool rows, message queueing and Stop.
-- Files, editor with save conflict detection, upload/download, Changes against a saved version, and Preview with an iframe and logs.
+- Files, editor with save conflict detection, upload/download, Changes against a saved version, and Preview with an iframe, logs, Reload, Restart and a Server form.
+- Preview runs the command in the project's `sparkbox.json` (command, port, directory); without one it is a static server with live reload. Same-origin WebSockets from preview pages are tunnelled through a bridge process in the sandbox, so Vite's HMR works. Backends run on one port; SQLite through sql.js.
 - Phone layout with the Civic Spark mobile rules.
 
 ## Limits

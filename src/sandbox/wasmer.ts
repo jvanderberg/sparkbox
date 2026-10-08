@@ -193,6 +193,7 @@ export class WasmerSandbox implements Sandbox {
     this.processes.add(process);
     const abort = () => void process.kill();
     options.signal?.addEventListener("abort", abort, { once: true });
+    const partial = { stdout: "", stderr: "" };
     const collect = async (stream: typeof process.stdout, name: "stdout" | "stderr") => {
       let text = "";
       if (!stream) return text;
@@ -200,20 +201,42 @@ export class WasmerSandbox implements Sandbox {
       for await (const chunk of stream) {
         const piece = decode.decode(chunk, { stream: true });
         text += piece;
+        partial[name] = text;
         options.onOutput?.(piece, name);
       }
       return text;
     };
+    const outputs = {
+      stdout: collect(process.stdout, "stdout"),
+      stderr: collect(process.stderr, "stderr"),
+    };
     try {
-      const [stdout, stderr, output] = await Promise.all([
-        collect(process.stdout, "stdout"),
-        collect(process.stderr, "stderr"),
-        process.wait(),
-      ]);
+      // Helper processes (pnpm workers, backgrounded servers) can keep the
+      // pipes open after the command exits. Collect until exit plus a short
+      // grace period instead of waiting for end of stream.
+      const output = await process.wait();
+      // Output can still be in flight after exit; stop once both streams end or
+      // nothing new has arrived for a moment (bounded at two seconds).
+      const deadline = Date.now() + 2000;
+      let seen = partial.stdout.length + partial.stderr.length;
+      let idleSince = Date.now();
+      const ended = Promise.all([outputs.stdout, outputs.stderr]).then(() => true);
+      while (Date.now() < deadline) {
+        const done = await Promise.race([
+          ended,
+          new Promise<false>((resolve) => setTimeout(() => resolve(false), 100)),
+        ]);
+        if (done) break;
+        const now = partial.stdout.length + partial.stderr.length;
+        if (now !== seen) {
+          seen = now;
+          idleSince = Date.now();
+        } else if (Date.now() - idleSince > 500) break;
+      }
       this.changed();
       return {
-        stdout,
-        stderr,
+        stdout: partial.stdout,
+        stderr: partial.stderr,
         exitCode: output.exitCode,
         timedOut: output.reason === "timeout",
       };

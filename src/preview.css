@@ -19,6 +19,7 @@
   box-shadow: 0 12px 32px rgb(0 0 0 / 0.25);
 }
 .preview-panel {
+  position: relative;
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -107,9 +108,6 @@
   font-size: 14px;
   cursor: pointer;
   box-shadow: 0 6px 20px rgb(0 0 0 / 0.2);
-}
-.preview-panel {
-  position: relative;
 }
 /* Leave room for the floating exit control. */
 .workspace-screen.preview-full .preview-page-errors,
