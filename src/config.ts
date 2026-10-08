@@ -8,6 +8,8 @@ export type HostConfig = {
   /** The host's fetch proxy for the download tool; empty without a host. */
   fetchUrl: string;
   freeAgent: { label: string; model: string } | null;
+  /** The OAuth app for "Sign in with GitHub"; empty without a host that has one. */
+  githubClientId: string;
 };
 
 let loaded: Promise<HostConfig> | null = null;
@@ -25,9 +27,16 @@ export function hostConfig(): Promise<HostConfig> {
           data.freeAgent && typeof data.freeAgent.model === "string"
             ? { label: String(data.freeAgent.label || "Sparkbox"), model: data.freeAgent.model }
             : null,
+        githubClientId: typeof data.githubClientId === "string" ? data.githubClientId : "",
       };
     })
-    .catch(() => ({ previewOrigin: "", wispUrl: "", fetchUrl: "", freeAgent: null }));
+    .catch(() => ({
+      previewOrigin: "",
+      wispUrl: "",
+      fetchUrl: "",
+      freeAgent: null,
+      githubClientId: "",
+    }));
   return loaded;
 }
 

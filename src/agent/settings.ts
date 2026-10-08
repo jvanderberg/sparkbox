@@ -1,3 +1,4 @@
+import type { GitHubLink } from "../github/sync.ts";
 import { type ProviderId, providers } from "./providers/types.ts";
 
 /**
@@ -5,6 +6,8 @@ import { type ProviderId, providers } from "./providers/types.ts";
  * They are never written into the sandbox, the project files or exports.
  */
 const prefix = "sparkbox:";
+/** Fired on window with the project id when a project's GitHub link changes. */
+export const githubLinkEvent = "sparkbox-github-link";
 
 function read(key: string) {
   try {
@@ -71,6 +74,34 @@ export const settings = {
   setSecrets(project: string, value: Record<string, string>) {
     const entries = Object.entries(value).filter(([name, secret]) => name && secret);
     write(`secrets:${project}`, entries.length ? JSON.stringify(Object.fromEntries(entries)) : "");
+  },
+  /** The GitHub token from Sign in with GitHub or a pasted token. Goes only to api.github.com. */
+  githubToken() {
+    return read("github-token");
+  },
+  setGithubToken(value: string) {
+    write("github-token", value.trim());
+  },
+  githubLogin() {
+    return read("github-login");
+  },
+  setGithubLogin(value: string) {
+    write("github-login", value.trim());
+  },
+  /** The repository a project is backed up to, if any. */
+  githubLink(project: string): GitHubLink | null {
+    try {
+      const parsed = JSON.parse(read(`github:${project}`) || "null") as GitHubLink | null;
+      if (!parsed || typeof parsed !== "object" || !parsed.owner || !parsed.name) return null;
+      return { ...parsed, auto: parsed.auto !== false };
+    } catch {
+      return null;
+    }
+  },
+  setGithubLink(project: string, value: GitHubLink | null) {
+    write(`github:${project}`, value ? JSON.stringify(value) : "");
+    // Settings and the workspace header both show the link; tell the other.
+    window.dispatchEvent(new CustomEvent(githubLinkEvent, { detail: project }));
   },
   configuredProviders(): ProviderId[] {
     return (Object.keys(providers) as ProviderId[]).filter((provider) =>

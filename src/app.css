@@ -124,3 +124,77 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* GitHub: connect, open, and the links in Settings */
+.link-button {
+  font: inherit;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--app-accent, #244f3e);
+  text-decoration: underline;
+  cursor: pointer;
+  min-height: 0;
+}
+.github-connect,
+.github-open {
+  display: grid;
+  gap: 12px;
+}
+.github-connect p,
+.github-open p {
+  margin: 0;
+}
+.github-signin {
+  min-height: 44px;
+  font-size: 14px;
+}
+.github-open input {
+  min-height: 44px;
+  font-size: 16px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--app-border);
+  background: var(--app-input);
+  color: var(--app-text);
+}
+.github-open .project-list {
+  margin: 0;
+  max-height: 50dvh;
+  overflow: auto;
+}
+.github-open .project-open {
+  display: grid;
+  gap: 2px;
+}
+.github-repo-note {
+  font-weight: 400;
+  font-size: 12px;
+  color: var(--app-muted);
+}
+.github-card p {
+  margin: 0 0 12px;
+}
+.github-card .button-row {
+  flex-wrap: wrap;
+}
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  font-size: 13px;
+}
+.checkbox-row input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+}
+.workspace-header a.button {
+  text-decoration: none;
+}
+.github-connect a,
+.github-settings a {
+  color: var(--app-accent, #244f3e);
+  text-decoration: underline;
+}

@@ -10,6 +10,7 @@ import { extname, join, normalize } from "node:path";
 import { WebSocketServer } from "ws";
 import { BodyTooLargeError, readBody } from "./body.ts";
 import { serveFetchProxy } from "./fetch-proxy.ts";
+import { exchangeGitHubCode } from "./github-auth.ts";
 import { DailyCounter, mintToken, verifyToken } from "./tokens.ts";
 import { serveWisp } from "./wisp.ts";
 
@@ -26,6 +27,10 @@ const openRouterKey = env.SPARKBOX_OPENROUTER_KEY ?? "";
 const freeModel = env.SPARKBOX_FREE_MODEL ?? "anthropic/claude-haiku-5.5";
 const freeLabel = env.SPARKBOX_FREE_LABEL ?? "Sparkbox";
 const publicOrigin = env.SPARKBOX_PUBLIC_ORIGIN ?? ""; // e.g. https://sparkbox.fly.dev
+// A GitHub OAuth app whose callback is the public origin. The client id is
+// public (it goes into /config.json); the secret stays here.
+const githubClientId = env.SPARKBOX_GITHUB_CLIENT_ID ?? "";
+const githubClientSecret = env.SPARKBOX_GITHUB_CLIENT_SECRET ?? "";
 const previewOrigin = env.SPARKBOX_PREVIEW_ORIGIN ?? (publicOrigin ? `${publicOrigin}:8443` : "");
 const limits = {
   requestsPerTokenPerDay: Number(env.SPARKBOX_REQUESTS_PER_DAY ?? 400),
@@ -130,7 +135,34 @@ async function handleApi(request: IncomingMessage, response: ServerResponse, url
       wispUrl: secret ? `${publicOrigin.replace(/^http/, "ws")}/wisp/` : "",
       fetchUrl: secret ? `${publicOrigin}/api/fetch` : "",
       freeAgent: freeAgentEnabled ? { label: freeLabel, model: freeModel } : null,
+      githubClientId: githubClientSecret ? githubClientId : "",
     });
+  }
+  if (url.pathname === "/api/github/token" && request.method === "POST") {
+    // The code is bound to this app's client id, so the exchange only works
+    // for sign-ins that started here. No invite is needed: nothing is spent.
+    if (!githubClientId || !githubClientSecret)
+      return sendJson(response, 503, { error: "GitHub sign-in is not enabled on this host." });
+    let body: { code?: string } = {};
+    try {
+      body = JSON.parse((await readBody(request, 4096)).toString("utf8") || "{}");
+    } catch {
+      return sendJson(response, 400, { error: "Send JSON with a code." });
+    }
+    const ip = String(request.headers["fly-client-ip"] ?? request.socket.remoteAddress ?? "?");
+    if (requests.add(`github:${ip}`) > 60)
+      return sendJson(response, 429, { error: "Too many sign-in attempts today." });
+    const result = await exchangeGitHubCode({
+      clientId: githubClientId,
+      clientSecret: githubClientSecret,
+      code: String(body.code ?? ""),
+    });
+    if ("error" in result) {
+      log(`github sign-in refused from ${ip}: ${result.error}`);
+      return sendJson(response, 400, { error: result.error });
+    }
+    log(`github sign-in completed from ${ip}`);
+    return sendJson(response, 200, { token: result.token });
   }
   if (url.pathname === "/api/invite" && request.method === "POST") {
     if (!secret || !inviteCodes.length)

@@ -10,6 +10,7 @@ Sparkbox is derived from [Civic Spark](https://github.com/jvanderberg/civic-spar
 | Claude Code / OpenCode runner inside the Sprite | A small agent loop in the page using each provider's native coding tools |
 | Management server, email sign-in, Git on the host | Nothing. Files live in IndexedDB; keys live in localStorage |
 | Managed preview URL | A static server inside the sandbox, served through a service worker on a second origin |
+| Git on the host, team repositories | Back up and Publish buttons that push to the user's own GitHub repository from the page and turn on GitHub Pages |
 
 ## Agent tools
 
@@ -32,6 +33,16 @@ Keys are stored only in this browser and are sent only to that provider. All thr
 
 API keys and tokens the app itself needs (a transit API key, say) go under Settings → Secrets while a project is open, not into the chat. They stay in this browser's localStorage, become environment variables in every command and in the preview server (so Vite exposes `VITE_`-prefixed ones to the page), can be written as `${NAME}` in download tool URLs, and are redacted to `[NAME]` in every tool output the model sees. The agent is told the names only.
 
+## Back up and publish with GitHub
+
+Browser storage is evictable, so every project gets two buttons in the workspace header:
+
+- **Back up** creates a public repository under the user's account on the first click (named after the project) and pushes every project file as one commit; later clicks push only what changed, and once a project is linked it is also pushed after every agent turn (the prompt becomes the commit message; Settings turns this off). The Changes view then compares against the last backup, and its form pushes with a message of your own.
+- **Publish** backs up and turns on GitHub Pages. A plain HTML project is served from the main branch (a `.nojekyll` file is added); a Vite project gets `.github/workflows/pages.yml`, which GitHub Actions runs to build it with the repository name as the base path, since the sandbox cannot run a production build. The header shows "Building site" until GitHub reports the commit live, then "Open site".
+- **Open from GitHub** on the projects home lists the account's repositories and copies one into the browser as a project that keeps backing up to it.
+
+Connecting is "Sign in with GitHub" when the host has an OAuth app, or a pasted personal access token (scopes `public_repo` and `workflow`) otherwise. GitHub's token endpoint refuses browser requests and needs the app's secret, so the host swaps the authorization code for the token at `POST /api/github/token` and keeps nothing; every other call goes from the page to api.github.com with the user's token, which lives in localStorage beside the provider keys. Pushes refuse files that contain a project secret's value. Repositories are public; publishing private projects is not offered.
+
 ## Hosted on Fly
 
 The deployed site is https://sparkbox.fly.dev. One small Fly machine runs `server/main.ts`, which:
@@ -41,9 +52,10 @@ The deployed site is https://sparkbox.fly.dev. One small Fly machine runs `serve
 - mints signed invite tokens at `POST /api/invite` from `SPARKBOX_INVITE_CODES`;
 - proxies the **Sparkbox** provider at `/api/agent/chat/completions` to OpenRouter with the server-held key, a fixed cheap model (`SPARKBOX_FREE_MODEL`, default Claude Haiku 5.5) and daily limits per token and overall; a request over `SPARKBOX_AGENT_BODY_BYTES` (default 32 MB, Anthropic's own request limit; the body is the whole conversation with its screenshots) gets a 413 with a message rather than a dropped connection;
 - relays WISP at `/wisp/<ticket>/` so the sandbox gets outbound TCP to any public host on ports 80 and 443. The destination is read from each stream's TLS server name or Host header, resolved on the host, refused when internal or private, and the connection is pinned to that address; `SPARKBOX_RELAY_ALLOWLIST` narrows it to named hosts. The relay is meant to be hard to borrow from outside Sparkbox rather than impossible: the upgrade must come from the app's origin (`SPARKBOX_RELAY_ORIGINS` adds more), the URL carries a one-day ticket from `POST /api/relay` rather than the invite token, each invite may hold a few connections (`SPARKBOX_RELAY_CONNECTIONS`, default 8) with a stream cap each (`SPARKBOX_RELAY_STREAMS`, default 256; a polling app that fetches many stops at once needs a wide cap), streams that never name a destination are dropped after 30 s, and bytes count against the invite's daily budget;
-- fetches URLs for the download tool at `/api/fetch` when a site sends no CORS headers (token required, GET only, public hosts only, size cap, same daily byte budget as the relay).
+- fetches URLs for the download tool at `/api/fetch` when a site sends no CORS headers (token required, GET only, public hosts only, size cap, same daily byte budget as the relay);
+- exchanges GitHub sign-in codes for tokens at `/api/github/token` when `SPARKBOX_GITHUB_CLIENT_ID` and `SPARKBOX_GITHUB_CLIENT_SECRET` name an OAuth app whose callback URL is the public origin (the client id is published in `/config.json`; without them the app offers a pasted token).
 
-It stores nothing. Tokens are HMAC-signed, counters live in memory, and the machine stops when idle (`auto_stop_machines`). Secrets: `SPARKBOX_TOKEN_SECRET`, `SPARKBOX_INVITE_CODES`, `SPARKBOX_OPENROUTER_KEY`. Deploy with `fly deploy --remote-only --ha=false`. Static-only hosting (no server) still works; the app then has no free agent and no relay, and the preview origin must be set in Settings.
+It stores nothing. Tokens are HMAC-signed, counters live in memory, and the machine stops when idle (`auto_stop_machines`). Secrets: `SPARKBOX_TOKEN_SECRET`, `SPARKBOX_INVITE_CODES`, `SPARKBOX_OPENROUTER_KEY`, `SPARKBOX_GITHUB_CLIENT_SECRET` (with `SPARKBOX_GITHUB_CLIENT_ID` in the environment). Deploy with `fly deploy --remote-only --ha=false`. Static-only hosting (no server) still works; the app then has no free agent and no relay, and the preview origin must be set in Settings.
 
 Locally, `npm run dev:server` runs the same process on port 4330 behind Vite's proxy with the relay URL pointing back at the dev server (set `SPARKBOX_TOKEN_SECRET`, `SPARKBOX_INVITE_CODES` and optionally `SPARKBOX_OPENROUTER_KEY` in the environment); see `scripts/host-smoke.ts` for the end-to-end check. A second checkout can run beside the first by setting `SPARKBOX_DEV_PORT` and `SPARKBOX_HOST_PORT` for Vite and matching `PORT` and origins for the host. Invites are limited to 30 per address per day, so repeated browser checks eventually need a restart of the host process.
 
@@ -62,7 +74,8 @@ Create a project, add a key in the Agent panel's Connection settings, and ask fo
 
 - Sandbox boot with persistent project files across reloads (IndexedDB snapshot of `/workspace`). The page keeps its own copy of the files, so the save issued when the tab is hidden or reloaded is complete and needs no sandbox round trip; `node_modules` and build output are never saved, and the preview says so when they are missing.
 - Agent turns against Anthropic, OpenAI and OpenRouter with streaming text, live tool rows, message queueing and Stop.
-- Files, editor with save conflict detection, upload/download, Changes against a saved version, and Preview with an iframe, logs, Reload, Restart and a Server form.
+- Files, editor with save conflict detection, upload/download, Changes against a saved version or the last GitHub backup, and Preview with an iframe, logs, Reload, Restart and a Server form.
+- Back up and Publish to the user's GitHub account from the page (`scripts/browser-smoke.ts` runs both against a faked API), and Open from GitHub.
 - Preview runs the command in the project's `sparkbox.json` (command, port, directory); without one it is a static server with live reload. The command runs under a small Node supervisor (`src/sandbox/supervise-script.ts`) that records every Node process it starts and kills them all on Stop, so `node server.js & node .sparkbox/vite.mjs` never leaves a server holding its port. Same-origin WebSockets from preview pages are tunnelled through a bridge process in the sandbox (`scripts/ws-smoke.ts`). Backends run on one port; SQLite through sql.js.
 - Real Vite 7 inside the sandbox (`scripts/vite-smoke.ts`). The sandbox runtime cannot run esbuild, Rollup's parser or WebAssembly, so `.sparkbox/vite.mjs` patches the installed Vite once to load replacements: esbuild calls are forwarded over the process's stdio to esbuild-wasm running in the page (`src/preview/esbuild-service.ts`), which reads and writes project files through the sandbox filesystem and calls plugin hooks back in the sandbox; Rollup's parser becomes acorn and the import lexer its asm.js build. File watching is event-driven: the page reports the exact paths it writes, diffs the workspace after each shell command, and the dev server only falls back to a slow content scan for processes that write files on their own. Vite 8 (Rolldown) is not supported yet.
 - Phone layout with the Civic Spark mobile rules.
@@ -76,8 +89,8 @@ Create a project, add a key in the Agent panel's Connection settings, and ask fo
 - **Preview needs a second origin.** Locally that is `localhost` vs `127.0.0.1`. A static deployment needs two hostnames serving the same build, set in Settings → Preview origin. GitHub Pages project sites share one origin, so use Cloudflare Pages or similar with two custom domains, or a separate host for the preview files (`wasmer-service-worker.js` and `.wasmer/`).
 - **Cross-origin isolation is required.** The dev server and `public/_headers` set the headers. Hosts that cannot set headers need the coi-serviceworker shim.
 - The full sandbox wants a desktop-class browser. Phones run the UI, but memory headroom for Wasmer on iOS is unverified.
-- No Git yet. Changes compares against the last Save version. GitHub publishing is planned.
-- Browser storage is evictable. Download or publish anything you care about.
+- No git in the sandbox. Changes compares against the last Save version, or the last backup once the project is on GitHub; there is no pull, so edits made on GitHub are only picked up by Open from GitHub into a new project.
+- Browser storage is evictable. Back up anything you care about.
 
 ## Checks
 

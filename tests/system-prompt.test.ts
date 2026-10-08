@@ -25,3 +25,13 @@ describe("system prompt stack rule", () => {
     expect(prompt).not.toContain("Stack: React");
   });
 });
+
+describe("system prompt sharing", () => {
+  it("points the agent at Back up and Publish and warns about the Pages base path", () => {
+    const prompt = systemPrompt({ ...base, networkEnabled: true });
+    expect(prompt).toContain("Back up button");
+    expect(prompt).toContain("GitHub Pages");
+    expect(prompt).toContain("import.meta.env.BASE_URL");
+    expect(prompt).not.toContain("Save version");
+  });
+});

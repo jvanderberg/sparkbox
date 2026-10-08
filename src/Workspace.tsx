@@ -2,10 +2,13 @@ import { Download, FilePlus2, RefreshCw, Save, Trash2, Upload } from "lucide-rea
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Agent } from "./Agent.tsx";
 import type { AgentRunner } from "./agent/runner.ts";
+import { settings } from "./agent/settings.ts";
 import { Changes } from "./Changes.tsx";
 import { CodeEditor } from "./CodeEditor.tsx";
 import { Badge } from "./components.tsx";
 import { FileExplorer } from "./FileExplorer.tsx";
+import { GitHubControls } from "./GitHubControls.tsx";
+import { useGitHubProject } from "./github/use-github-project.ts";
 import { MobileMenu } from "./MobileMenu.tsx";
 import { PreviewControls, PreviewPanel, type usePreview } from "./Preview.tsx";
 import { loadBaseline, saveBaseline } from "./sandbox/storage.ts";
@@ -35,6 +38,7 @@ export function Workspace({
   sandbox,
   runner,
   preview,
+  githubClientId,
   onClose,
   onSettings,
 }: {
@@ -42,6 +46,8 @@ export function Workspace({
   sandbox: WasmerSandbox;
   runner: AgentRunner;
   preview: ReturnType<typeof usePreview>;
+  /** The host's GitHub OAuth app, or empty when the user pastes a token. */
+  githubClientId: string;
   onClose: () => void;
   onSettings: () => void;
 }) {
@@ -169,6 +175,25 @@ export function Workspace({
     };
   }, [sandbox, refreshFiles]);
 
+  const report = useCallback((text: string, failed = false) => {
+    if (failed) {
+      setMessage("");
+      setError(text);
+    } else {
+      setError("");
+      setMessage(text);
+    }
+  }, []);
+  const github = useGitHubProject({
+    project: { id: workspace, name },
+    sandbox,
+    runner,
+    secrets: () => settings.secrets(workspace),
+    baseline,
+    onPushed: () => void refreshFiles(),
+    report,
+  });
+
   async function open(path: string) {
     if (dirty && !window.confirm("Discard unsaved edits and open another file?")) return false;
     const sequence = ++openSequence.current;
@@ -289,6 +314,13 @@ export function Workspace({
               setPreviewFull(true);
             }}
           />
+          <GitHubControls
+            github={github}
+            clientId={githubClientId}
+            disabled={busy || dirty}
+            changed={changes?.files.length ?? 0}
+            onError={(text) => report(text, true)}
+          />
           <button type="button" className="button small" onClick={onSettings}>
             Settings
           </button>
@@ -321,7 +353,8 @@ export function Workspace({
           refresh={() => void refreshFiles()}
           dirty={dirty}
           readOnly={readOnly || busy}
-          onSaveVersion={saveVersion}
+          mode={github.link ? "github" : "save"}
+          onCommit={github.link ? github.backUp : saveVersion}
           error={changesError}
         />
       </section>

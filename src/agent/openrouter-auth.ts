@@ -31,7 +31,8 @@ export async function beginOpenRouterLogin() {
 export async function completeOpenRouterLogin(): Promise<string | null> {
   const url = new URL(location.href);
   const code = url.searchParams.get("code");
-  if (!code) return null;
+  // GitHub's callback also carries a code, with a state; OpenRouter sends none.
+  if (!code || url.searchParams.has("state")) return null;
   const verifier = sessionStorage.getItem(verifierKey);
   url.searchParams.delete("code");
   history.replaceState(null, "", url.href);

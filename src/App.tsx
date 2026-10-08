@@ -6,13 +6,19 @@ import { isSecretName } from "./agent/secrets.ts";
 import { settings } from "./agent/settings.ts";
 import { Field, Modal } from "./components.tsx";
 import { type HostConfig, hostConfig, relayUrl } from "./config.ts";
+import { GitHubConnect } from "./GitHubConnect.tsx";
+import { GitHubOpen } from "./GitHubOpen.tsx";
+import { githubAccount, useGitHubAccount } from "./github/account.ts";
+import type { Repository } from "./github/api.ts";
+import { completeGitHubLogin } from "./github/auth.ts";
 import { Loading } from "./Loading.tsx";
 import { defaultPreviewOrigin, previewPort, usePreview } from "./Preview.tsx";
 import { queryPreview } from "./preview-bridge.ts";
-import { deleteSnapshot, listSnapshots } from "./sandbox/storage.ts";
+import { deleteSnapshot, listSnapshots, saveBaseline, saveSnapshot } from "./sandbox/storage.ts";
 import { type SandboxProgress, WasmerSandbox } from "./sandbox/wasmer.ts";
 import { starterTemplate } from "./template.ts";
 import { Workspace } from "./Workspace.tsx";
+import type { FileMap } from "./workspace/changes.ts";
 import "./app.css";
 
 type Project = { id: string; name: string };
@@ -30,6 +36,12 @@ function loadProjects(): Project[] {
 function storeProjects(projects: Project[]) {
   localStorage.setItem(projectsKey, JSON.stringify(projects));
 }
+function projectId(name: string) {
+  return `${name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "")}-${crypto.randomUUID().slice(0, 6)}`;
+}
 
 export function App() {
   const [projects, setProjects] = useState<Project[]>(loadProjects);
@@ -44,6 +56,15 @@ export function App() {
     settings.previewOrigin() || defaultPreviewOrigin(),
   );
   const [newName, setNewName] = useState("");
+  const [host, setHost] = useState<HostConfig | null>(null);
+  useEffect(() => {
+    void hostConfig().then(setHost);
+  }, []);
+  const account = useGitHubAccount();
+  const [connecting, setConnecting] = useState(false);
+  const [opening, setOpening] = useState(false);
+  // The open project's repository link, re-read when Settings opens.
+  const [link, setLink] = useState(() => (open ? settings.githubLink(open.id) : null));
   // Project secrets edited in Settings; the open session re-reads them on save.
   const [secretRows, setSecretRows] = useState<{ id: number; name: string; value: string }[]>([]);
   const nextRowId = useRef(1);
@@ -54,6 +75,7 @@ export function App() {
   useEffect(() => {
     if (!settingsOpen) return;
     setSecretsError("");
+    setLink(open ? settings.githubLink(open.id) : null);
     setSecretRows(
       open
         ? Object.entries(settings.secrets(open.id)).map(([name, value]) => ({
@@ -73,6 +95,17 @@ export function App() {
           settings.setProvider("openrouter");
           setNotice("OpenRouter is connected.");
         }
+      })
+      .catch((error: Error) => setNotice(error.message));
+    // A same-tab GitHub sign-in lands back here with a code to exchange.
+    void completeGitHubLogin()
+      .then(async (token) => {
+        if (!token) return;
+        const login = await githubAccount.connect(token);
+        setNotice(`GitHub is connected as ${login}.`);
+        const id = new URLSearchParams(location.hash.slice(1)).get("project");
+        const project = loadProjects().find((entry) => entry.id === id);
+        if (project) setOpen(project);
       })
       .catch((error: Error) => setNotice(error.message));
   }, []);
@@ -97,10 +130,7 @@ export function App() {
   function createProject() {
     const name = newName.trim();
     if (!name) return;
-    const id = `${name
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-|-$/g, "")}-${crypto.randomUUID().slice(0, 6)}`;
+    const id = projectId(name);
     const next = [...projects, { id, name }];
     setProjects(next);
     storeProjects(next);
@@ -108,6 +138,37 @@ export function App() {
     setSecrets(settings.secrets(id));
     setOpen({ id, name });
   }
+
+  /** A repository's files become a project that keeps backing up to it. */
+  async function openRepository(repo: Repository, files: FileMap) {
+    const id = projectId(repo.name);
+    await saveSnapshot(id, files);
+    await saveBaseline(id, files);
+    settings.setGithubLink(id, { ...repo, auto: true, pushedAt: new Date().toISOString() });
+    const next = [...projects, { id, name: repo.name }];
+    setProjects(next);
+    storeProjects(next);
+    setOpening(false);
+    setSecrets(settings.secrets(id));
+    setOpen({ id, name: repo.name });
+  }
+
+  const githubModals = (
+    <>
+      {connecting && (
+        <GitHubConnect
+          clientId={host?.githubClientId ?? ""}
+          reason="Projects live only in this browser, where storage can be cleared without warning. GitHub keeps a copy of each one and can publish it as a website."
+          onConnected={(login) => {
+            setConnecting(false);
+            setNotice(`GitHub is connected as ${login}.`);
+          }}
+          onClose={() => setConnecting(false)}
+        />
+      )}
+      {opening && <GitHubOpen onOpen={openRepository} onClose={() => setOpening(false)} />}
+    </>
+  );
 
   const settingsModal = settingsOpen && (
     <Modal title="Settings" onClose={() => setSettingsOpen(false)}>
@@ -203,6 +264,74 @@ export function App() {
             )}
           </fieldset>
         )}
+        <fieldset className="secrets github-settings">
+          <legend>GitHub</legend>
+          {account ? (
+            <p className="muted">
+              Connected as <strong>{account.login}</strong>.{" "}
+              <button
+                type="button"
+                className="link-button"
+                onClick={() => {
+                  githubAccount.disconnect();
+                  setNotice("GitHub is disconnected from this browser.");
+                }}
+              >
+                Sign out
+              </button>
+            </p>
+          ) : (
+            <p className="muted">
+              Not connected.{" "}
+              <button type="button" className="link-button" onClick={() => setConnecting(true)}>
+                Connect GitHub
+              </button>{" "}
+              to back up and publish projects.
+            </p>
+          )}
+          {open && link && (
+            <>
+              <p className="muted">
+                This project backs up to{" "}
+                <a href={link.htmlUrl} target="_blank" rel="noreferrer">
+                  {link.owner}/{link.name}
+                </a>
+                {link.siteUrl && (
+                  <>
+                    {" "}
+                    and is published at{" "}
+                    <a href={link.siteUrl} target="_blank" rel="noreferrer">
+                      {link.siteUrl}
+                    </a>
+                  </>
+                )}
+                .{" "}
+                <button
+                  type="button"
+                  className="link-button"
+                  onClick={() => {
+                    settings.setGithubLink(open.id, null);
+                    setLink(null);
+                  }}
+                >
+                  Forget this repository
+                </button>
+              </p>
+              <label className="checkbox-row">
+                <input
+                  type="checkbox"
+                  checked={link.auto}
+                  onChange={(event) => {
+                    const next = { ...link, auto: event.target.checked };
+                    settings.setGithubLink(open.id, next);
+                    setLink(next);
+                  }}
+                />
+                Back up after every agent turn
+              </label>
+            </>
+          )}
+        </fieldset>
         <Field label="Preview origin">
           <input
             value={previewOrigin}
@@ -241,10 +370,12 @@ export function App() {
           key={open.id}
           project={open}
           secrets={secrets}
+          host={host}
           onClose={() => setOpen(null)}
           onSettings={() => setSettingsOpen(true)}
         />
         {settingsModal}
+        {githubModals}
       </>
     );
 
@@ -292,6 +423,7 @@ export function App() {
                   storeProjects(next);
                   void deleteSnapshot(project.id);
                   void deleteSnapshot(`${project.id}#baseline`);
+                  settings.setGithubLink(project.id, null);
                 }}
               >
                 Delete
@@ -317,6 +449,43 @@ export function App() {
           </button>
         </form>
       </section>
+      <section className="home-card github-card">
+        <h2>Back up and publish</h2>
+        {account ? (
+          <>
+            <p>
+              GitHub is connected as <strong>{account.login}</strong>. Each project has a Back up
+              button that pushes it to a repository, and Publish puts it online with GitHub Pages.
+            </p>
+            <div className="button-row">
+              <button type="button" className="button" onClick={() => setOpening(true)}>
+                Open from GitHub
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <p>
+              Projects live only in this browser, and browsers clear storage without warning.
+              Connect a GitHub account to keep a copy of every project and to publish any of them as
+              a website in one click. A free account is enough.
+            </p>
+            <div className="button-row">
+              <button type="button" className="button primary" onClick={() => setConnecting(true)}>
+                Connect GitHub
+              </button>
+              <a
+                className="button"
+                href="https://github.com/signup"
+                target="_blank"
+                rel="noreferrer"
+              >
+                Create a GitHub account
+              </a>
+            </div>
+          </>
+        )}
+      </section>
       <section className="home-card">
         <h2>How it works</h2>
         <ul className="home-list">
@@ -334,17 +503,20 @@ export function App() {
         </ul>
       </section>
       {settingsModal}
+      {githubModals}
     </main>
   );
 }
 
 function ProjectSession({
   project,
+  host,
   onClose,
   onSettings,
   secrets,
 }: {
   project: Project;
+  host: HostConfig | null;
   onClose: () => void;
   onSettings: () => void;
   secrets: Record<string, string>;
@@ -357,10 +529,6 @@ function ProjectSession({
   const [runner, setRunner] = useState<AgentRunner | null>(null);
   const [progress, setProgress] = useState<SandboxProgress>({ phase: "runtime" });
   const [error, setError] = useState("");
-  const [host, setHost] = useState<HostConfig | null>(null);
-  useEffect(() => {
-    void hostConfig().then(setHost);
-  }, []);
   const origin = settings.previewOrigin() || host?.previewOrigin || defaultPreviewOrigin();
   const preview = usePreview(sandbox, origin);
   const previewRef = useRef(preview);
@@ -477,6 +645,7 @@ function ProjectSession({
       sandbox={sandbox}
       runner={runner}
       preview={preview}
+      githubClientId={host?.githubClientId ?? ""}
       onClose={onClose}
       onSettings={onSettings}
     />
