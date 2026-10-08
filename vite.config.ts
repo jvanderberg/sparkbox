@@ -48,21 +48,22 @@ function patchServiceWorker(source: string) {
   source = `${source}
 const SPARKBOX_BRIDGE = ${JSON.stringify(bridgeScript)};
 const SPARKBOX_TAG = '<script src="/__sparkbox/bridge.js"></script>';
+// The bridge must run before any page script so the WebSocket shim is in
+// place: after <head> when there is one, else after <html> or <body>, else
+// at the very start.
 function injectBridge(body, headers) {
     const text = new TextDecoder().decode(body);
-    const head = text.search(/<head[^>]*>/i);
-    let out;
-    if (head >= 0) {
-        const after = head + text.slice(head).indexOf(">") + 1;
+    let out = SPARKBOX_TAG + text;
+    for (const opener of [/<head[^>]*>/i, /<html[^>]*>/i, /<body[^>]*>/i]) {
+        const match = opener.exec(text);
+        if (!match) continue;
+        const after = match.index + match[0].length;
         out = text.slice(0, after) + SPARKBOX_TAG + text.slice(after);
-    } else {
-        const bodyEnd = text.search(/<\\/body>/i);
-        out = bodyEnd >= 0 ? text.slice(0, bodyEnd) + SPARKBOX_TAG + text.slice(bodyEnd) : SPARKBOX_TAG + text;
+        break;
     }
     headers.delete("content-length");
     return new TextEncoder().encode(out).buffer;
-}
-`;
+}`;
   replace(
     'if (url.pathname.startsWith("/.wasmer/"))\n        return;',
     'if (url.origin !== self.location.origin || url.pathname.startsWith("/.wasmer/"))\n        return;',

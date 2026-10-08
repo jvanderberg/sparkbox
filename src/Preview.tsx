@@ -124,7 +124,10 @@ export function usePreview(sandbox: WasmerSandbox | null, origin: string) {
     return started;
   }
 
-  // Messages from preview pages: error reports and tunnelled sockets.
+  // Messages from preview pages: error reports and tunnelled sockets. The
+  // listener re-registers when the sandbox changes so the captured tunnel
+  // helper can start the bridge process in the current runtime.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the tunnel helpers otherwise only read refs
   useEffect(() => {
     if (!origin) return;
     let expected = "";
@@ -134,7 +137,8 @@ export function usePreview(sandbox: WasmerSandbox | null, origin: string) {
       return;
     }
     const listener = (event: MessageEvent) => {
-      if (event.origin !== expected || !event.source || !("postMessage" in event.source)) return;
+      // `in` on a cross-origin WindowProxy throws; only the origin is checked here.
+      if (event.origin !== expected || !event.source) return;
       const data = event.data as {
         type?: string;
         message?: string;
@@ -161,7 +165,7 @@ export function usePreview(sandbox: WasmerSandbox | null, origin: string) {
       const source = event.source as Window;
       const pageId = data.id;
       void (async () => {
-        const pipe = await ensureTunnel();
+        const pipe = await ensureTunnel().catch(() => null);
         if (!pipe) return;
         let perPage = pageIds.current.get(source);
         if (!perPage) {
@@ -201,7 +205,7 @@ export function usePreview(sandbox: WasmerSandbox | null, origin: string) {
     };
     window.addEventListener("message", listener);
     return () => window.removeEventListener("message", listener);
-  }, [origin]);
+  }, [origin, sandbox]);
 
   const urlRef = useRef("");
   urlRef.current = url;

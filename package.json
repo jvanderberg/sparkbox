@@ -20,7 +20,8 @@
     "test:live:openai": "tsx scripts/live-turn.ts openai",
     "test:live:openrouter": "tsx scripts/live-turn.ts openrouter",
     "dev:server": "node --experimental-strip-types server/main.ts",
-    "start": "node --experimental-strip-types server/main.ts"
+    "start": "node --experimental-strip-types server/main.ts",
+    "test:ws": "tsx scripts/ws-smoke.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.131.0",
