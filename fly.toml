@@ -45,4 +45,5 @@ primary_region = "ord"
 
 [[vm]]
   size = "shared-cpu-1x"
-  memory = "256mb"
+  # Proxying a 32 MB free-agent request parses and re-serializes it; 256 MB ran out.
+  memory = "512mb"

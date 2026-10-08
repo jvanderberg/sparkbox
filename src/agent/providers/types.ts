@@ -140,7 +140,7 @@ export function describeFailure(error: unknown): ProviderError {
   const detail = failureDetail(error);
   if (status && status >= 500)
     return new ProviderError(
-      `The provider returned a server error (${status}${detail ? `: ${detail}` : ""}). Retry in a moment.`,
+      `The provider returned a server error (${status}${detail ? `: ${detail}` : ", no details"}). Retry in a moment.`,
       status,
       "other",
     );
@@ -170,6 +170,8 @@ export function failureDetail(error: unknown): string {
     .replace(/^\s*\d{3}\s+/, "")
     .replace(/\s+/g, " ")
     .trim();
+  // The SDKs' placeholder for an empty response body says nothing useful.
+  if (/^status code \(no body\)$/i.test(text)) return "";
   if (/^\{/.test(text)) {
     try {
       const parsed = JSON.parse(text) as {

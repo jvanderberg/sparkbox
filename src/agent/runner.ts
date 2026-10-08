@@ -251,6 +251,14 @@ export class AgentRunner {
       else {
         outcome = "failed";
         const failure = describeFailure(error);
+        // The chat shows a short message; the console keeps the raw status,
+        // provider text and request id for diagnosis. Never the key or body.
+        const raw = error as { status?: number; message?: string; requestID?: string } | null;
+        console.warn(`Provider request failed (${provider})`, {
+          status: raw?.status,
+          message: raw?.message,
+          requestId: raw?.requestID,
+        });
         const message =
           error instanceof Error && !("status" in error) ? error.message : failure.message;
         this.emit({

@@ -16,6 +16,14 @@ describe("provider failure messages", () => {
       "The provider returned a server error (502: Provider returned error). Retry in a moment.",
     );
   });
+  it("says when a server error came with no body instead of echoing the SDK placeholder", () => {
+    // Fly's proxy answers this way when the host drops the connection.
+    const failure = describeFailure({ status: 502, message: "502 status code (no body)" });
+    expect(failure.message).toBe(
+      "The provider returned a server error (502, no details). Retry in a moment.",
+    );
+    expect(failureDetail({ message: "502 status code (no body)" })).toBe("");
+  });
   it("unwraps a JSON body in the message and shortens long text", () => {
     expect(failureDetail({ message: '503 {"error":"Overloaded"}' })).toBe("Overloaded");
     expect(failureDetail({ message: "x".repeat(400) })).toHaveLength(200);

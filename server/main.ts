@@ -8,6 +8,7 @@ import { createReadStream, existsSync, statSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { extname, join, normalize } from "node:path";
 import { WebSocketServer } from "ws";
+import { BodyTooLargeError, readBody } from "./body.ts";
 import { serveFetchProxy } from "./fetch-proxy.ts";
 import { DailyCounter, mintToken, verifyToken } from "./tokens.ts";
 import { serveWisp } from "./wisp.ts";
@@ -31,6 +32,10 @@ const limits = {
   requestsGlobalPerDay: Number(env.SPARKBOX_GLOBAL_REQUESTS_PER_DAY ?? 5000),
   relayBytesPerTokenPerDay: Number(env.SPARKBOX_RELAY_BYTES_PER_DAY ?? 2 * 1024 ** 3),
   maxTokens: Number(env.SPARKBOX_MAX_OUTPUT_TOKENS ?? 16_000),
+  // A free-agent request carries the whole conversation, screenshots included.
+  // 32 MB is Anthropic's own request limit, so the model's context window is
+  // the binding constraint and its "prompt is too long" reply gets through.
+  agentBodyBytes: Number(env.SPARKBOX_AGENT_BODY_BYTES ?? 32 * 1024 * 1024),
 };
 // The relay reaches any public host on 80/443 unless this narrows it to a
 // list of names (exact or `*.suffix`).
@@ -86,24 +91,6 @@ function log(message: string) {
 function sendJson(response: ServerResponse, status: number, body: unknown) {
   response.writeHead(status, { "content-type": "application/json; charset=utf-8", ...isolation });
   response.end(JSON.stringify(body));
-}
-
-function readBody(request: IncomingMessage, limit = 2 * 1024 * 1024) {
-  return new Promise<Buffer>((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    let size = 0;
-    request.on("data", (chunk: Buffer) => {
-      size += chunk.length;
-      if (size > limit) {
-        reject(new Error("body too large"));
-        request.destroy();
-        return;
-      }
-      chunks.push(chunk);
-    });
-    request.on("end", () => resolve(Buffer.concat(chunks)));
-    request.on("error", reject);
-  });
 }
 
 function serveFile(
@@ -204,8 +191,17 @@ async function handleApi(request: IncomingMessage, response: ServerResponse, url
       });
     let body: Record<string, unknown>;
     try {
-      body = JSON.parse((await readBody(request)).toString("utf8"));
-    } catch {
+      body = JSON.parse((await readBody(request, limits.agentBodyBytes)).toString("utf8"));
+    } catch (error) {
+      if (error instanceof BodyTooLargeError) {
+        log(`agent ${session.id}: request over ${limits.agentBodyBytes} bytes refused`);
+        const megabytes = Math.round(limits.agentBodyBytes / 1024 ** 2);
+        return sendJson(response, 413, {
+          error: {
+            message: `This conversation is too large for the free agent (over ${megabytes} MB). Start a new chat, or remove large images.`,
+          },
+        });
+      }
       return sendJson(response, 400, { error: "Invalid request body." });
     }
     body.model = freeModel;

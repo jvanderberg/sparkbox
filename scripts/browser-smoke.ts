@@ -74,7 +74,7 @@ async function run(label: string, options: { mobile?: boolean; dark?: boolean })
     await page.getByRole("button", { name: "Add secret" }).click();
     await page.getByLabel("Secret 1 name").fill("SMOKE_SECRET");
     await page.getByLabel("Secret 1 value").fill("smoke-secret-value");
-    await page.getByRole("button", { name: "Save" }).click();
+    await page.getByRole("button", { name: "Save", exact: true }).click();
     await page.getByRole("button", { name: "Add secret" }).waitFor({ state: "detached" });
     const secret = await page.evaluate(() =>
       (
