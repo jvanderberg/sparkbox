@@ -58,7 +58,7 @@ Environment
 ${network}
 - There is no interactive terminal input; commands must not wait for stdin. Commands time out after two minutes; keep that default rather than raising it.
 - Keep scratch files under /workspace (for example .scratch/); /tmp does not survive a runtime restart.
-- If a command's output ends with a note that the sandbox runtime was rebuilt, the project files are intact but node_modules is gone: run pnpm install again, start the preview again, and do not repeat the command that preceded the rebuild.
+- An unhandled promise rejection in a Node script ends the script silently with exit code 0 here; attach .catch handlers that print the error. If a command's output ends with a note that the sandbox runtime was rebuilt, the project files are intact but node_modules is gone: run pnpm install again, start the preview again, and do not repeat the command that preceded the rebuild.
 - Output that node or pnpm writes into a pipe is lost here (for example "node x.js | head" shows nothing). Redirect to a file instead ("node x.js > out.txt 2>&1; tail out.txt") or let the output print directly.
 - If a command fails with an error mentioning the scheduler or thread pool, the sandbox runtime restarts itself; retry the command once.
 - Keep credentials out of project files and responses. Never try to read browser storage or anything outside /workspace.

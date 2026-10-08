@@ -118,6 +118,45 @@ function previewHost(): Plugin {
 }
 
 /**
+ * The SDK's browser worker treats any unhandled promise rejection as a
+ * worker failure and closes the whole worker pool, after which new guest
+ * processes hang instead of failing. Rejections from guest JavaScript
+ * (Node code running through Edge.js) reach that listener too, so one
+ * uncaught rejection in a user script or inside the Vite dev server took
+ * the sandbox down. Guest rejections are logged and ignored instead; the
+ * SDK's own task failures still go through reportWorkerFailure.
+ */
+function patchBrowserWorker(source: string) {
+  const anchor =
+    'globalThis.addEventListener("unhandledrejection", (event) => {\n    event.preventDefault();\n    reportWorkerFailure(event.reason);\n});';
+  if (!source.includes(anchor)) throw new Error("browser worker patch anchor missing");
+  return source.replace(
+    anchor,
+    `globalThis.addEventListener("unhandledrejection", (event) => {
+    event.preventDefault();
+    const reason = event.reason;
+    if (reason && typeof reason === "object" && reason.name === "WasmerError") {
+        reportWorkerFailure(reason);
+        return;
+    }
+    console.warn("[sparkbox] unhandled promise rejection in guest JavaScript (the process continues):", reason);
+});`,
+  );
+}
+
+/** Serves the patched worker in development; the build emits it through wasmerRuntime. */
+function wasmerWorkerPatch(): Plugin {
+  return {
+    name: "sparkbox-wasmer-worker-patch",
+    enforce: "pre",
+    transform(source, id) {
+      if (!id.split("?")[0]?.endsWith("/@wasmer/sdk/dist/browser-worker.js")) return;
+      return { code: patchBrowserWorker(source), map: null };
+    },
+  };
+}
+
+/**
  * The SDK starts its worker and wasm-bindgen module by URL
  * (`new URL("./browser-worker.js", import.meta.url)`), which Vite does not
  * traverse: the worker ends up bundled while the binding it imports is copied
@@ -173,7 +212,10 @@ function wasmerRuntime(): Plugin {
         this.emitFile({
           type: "asset",
           fileName: `${directory}/${relative(sdkRoot, file).split(sep).join("/")}`,
-          source,
+          source:
+            file === resolve(sdkDist, "browser-worker.js")
+              ? patchBrowserWorker(source.toString())
+              : source,
         });
     },
     transform(source, id) {
@@ -194,7 +236,7 @@ function wasmerRuntime(): Plugin {
 }
 
 export default defineConfig({
-  plugins: [react(), tailwindcss(), previewHost(), wasmerRuntime()],
+  plugins: [react(), tailwindcss(), previewHost(), wasmerWorkerPatch(), wasmerRuntime()],
   server: {
     port: 4320,
     strictPort: true,

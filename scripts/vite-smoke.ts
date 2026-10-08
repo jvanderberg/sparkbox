@@ -308,32 +308,44 @@ console.log(
 );
 if (!shellPreserved) throw new Error("shell edit lost component state");
 await dumpLogs("final");
-// Runtime recovery: an unhandled promise rejection inside a guest Node
-// process escapes the runtime and crashes its browser worker (a raw
-// `vite build` does the same through Rollup's loader). The SDK then closes
-// its pool and later spawns would hang forever; the sandbox must notice and
-// rebuild itself so the next command runs.
-const crashed = Date.now();
+// Guest failures must not take the runtime down. An unhandled promise
+// rejection inside a guest Node process used to reach the SDK worker's
+// global handler, which closed the worker pool so every later spawn hung;
+// the worker is patched in vite.config.ts to log guest rejections instead.
+// The command must return, the next command must run, the dev server must
+// still answer, and no restart must have happened.
 const crash = await Promise.race([
-  run("node -e 'Promise.reject(new Error(\"escaped\"))'; echo EXIT $?"),
+  run(
+    'node -e \'Promise.reject(new Error("escaped")); setTimeout(() => console.log("still running"), 200)\'; echo EXIT $?',
+  ),
   new Promise<"hung">((resolve) => setTimeout(() => resolve("hung"), 60_000)),
 ]);
-console.log(
-  "guest crash:",
-  typeof crash === "string" ? crash : JSON.stringify(crash).slice(0, 200),
-);
-const recovered = await Promise.race([
-  run("echo recovered"),
-  new Promise<"hung">((resolve) => setTimeout(() => resolve("hung"), 90_000)),
+if (typeof crash === "string" || !/still running[\s\S]*EXIT 0/.test(crash.stdout))
+  throw new Error(`guest rejection did not stay inside the guest: ${JSON.stringify(crash)}`);
+const afterwards = await Promise.race([
+  run("echo survived"),
+  new Promise<"hung">((resolve) => setTimeout(() => resolve("hung"), 60_000)),
 ]);
-if (typeof recovered === "string" || !/recovered/.test(recovered.stdout))
-  throw new Error(
-    `the sandbox did not recover from the worker crash: ${JSON.stringify(recovered)}`,
-  );
-console.log(`runtime recovered after a worker crash in ${Date.now() - crashed} ms`);
-await tabs.getByRole("button", { name: "Preview" }).click();
-await page.getByText("The sandbox runtime restarted").waitFor({ timeout: 10_000 });
-console.log("preview panel reports the restart");
+if (typeof afterwards === "string" || !/survived/.test(afterwards.stdout))
+  throw new Error(`the sandbox hung after a guest rejection: ${JSON.stringify(afterwards)}`);
+await write(
+  "src/App.tsx",
+  (await run("cat src/App.tsx")).stdout.replace("hello shell", "hello after rejection"),
+);
+await withLogs(
+  "after rejection",
+  content.getByRole("heading", { name: "hello after rejection" }).waitFor({ timeout: 60_000 }),
+);
+if (
+  await page
+    .getByText("The sandbox runtime restarted")
+    .isVisible()
+    .catch(() => false)
+)
+  throw new Error("the runtime was rebuilt after a guest rejection");
+if (errors.some((message) => /escaped/.test(message)))
+  throw new Error("a guest rejection surfaced as a page error");
+console.log("guest rejection stayed inside the guest; dev server still serving");
 await browser.close();
 if (errors.length) console.log(`page errors:\n${errors.join("\n")}`);
 console.log("ok vite hmr");
