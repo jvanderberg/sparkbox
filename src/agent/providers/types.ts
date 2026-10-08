@@ -137,11 +137,50 @@ export function describeFailure(error: unknown): ProviderError {
       status,
       "network",
     );
+  const detail = failureDetail(error);
   if (status && status >= 500)
     return new ProviderError(
-      "The provider returned a server error. Retry in a moment.",
+      `The provider returned a server error (${status}${detail ? `: ${detail}` : ""}). Retry in a moment.`,
       status,
       "other",
     );
-  return new ProviderError("The provider request failed.", status, "other");
+  return new ProviderError(
+    `The provider request failed${status ? ` (${status})` : ""}${detail ? `: ${detail}` : ""}.`,
+    status,
+    "other",
+  );
+}
+
+/**
+ * The provider's own explanation, shortened: the message from the error body
+ * when the SDK parsed one, otherwise the error message with any leading status
+ * and JSON wrapper stripped. Responses never carry the request or the key.
+ */
+export function failureDetail(error: unknown): string {
+  const value = error as {
+    message?: string;
+    error?: { message?: string; metadata?: { raw?: string } } | string;
+  } | null;
+  const nested = value?.error;
+  let text =
+    typeof nested === "string"
+      ? nested
+      : (nested?.message ?? nested?.metadata?.raw ?? value?.message ?? "");
+  text = String(text)
+    .replace(/^\s*\d{3}\s+/, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (/^\{/.test(text)) {
+    try {
+      const parsed = JSON.parse(text) as {
+        error?: { message?: string } | string;
+        message?: string;
+      };
+      const inner = typeof parsed.error === "string" ? parsed.error : parsed.error?.message;
+      text = inner ?? parsed.message ?? text;
+    } catch {
+      // Not JSON after all; keep the text.
+    }
+  }
+  return text.length > 200 ? `${text.slice(0, 199)}…` : text;
 }

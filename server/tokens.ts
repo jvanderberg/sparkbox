@@ -1,23 +1,36 @@
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 
-/** Signed, stateless session tokens: `<id>.<expires>.<signature>`. */
-export function mintToken(secret: string, ttlDays = 90) {
-  const id = randomBytes(9).toString("base64url");
+/**
+ * Signed, stateless session tokens: `<id>.<expires>.<signature>`.
+ *
+ * A scope separates token kinds that share the secret: invite tokens (the
+ * default, signed over the bare body so tokens minted earlier stay valid) and
+ * short-lived relay tickets, which carry the invite's id so budgets stay per
+ * invite but cannot be used in place of the invite itself.
+ */
+export function mintToken(
+  secret: string,
+  ttlDays = 90,
+  options: { scope?: string; id?: string } = {},
+) {
+  const id = options.id ?? randomBytes(9).toString("base64url");
   const expires = Date.now() + ttlDays * 86_400_000;
   const body = `${id}.${expires}`;
-  return `${body}.${sign(secret, body)}`;
+  return `${body}.${sign(secret, body, options.scope)}`;
 }
 
-function sign(secret: string, body: string) {
-  return createHmac("sha256", secret).update(body).digest("base64url");
+function sign(secret: string, body: string, scope?: string) {
+  return createHmac("sha256", secret)
+    .update(scope ? `${scope}:${body}` : body)
+    .digest("base64url");
 }
 
-export function verifyToken(secret: string, token: string | undefined | null) {
+export function verifyToken(secret: string, token: string | undefined | null, scope?: string) {
   if (!token) return null;
   const parts = token.split(".");
   if (parts.length !== 3) return null;
   const [id, expires, signature] = parts as [string, string, string];
-  const expected = sign(secret, `${id}.${expires}`);
+  const expected = sign(secret, `${id}.${expires}`, scope);
   if (expected.length !== signature.length) return null;
   if (!timingSafeEqual(Buffer.from(expected), Buffer.from(signature))) return null;
   if (Number(expires) < Date.now()) return null;

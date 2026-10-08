@@ -10,7 +10,7 @@ import { extname, join, normalize } from "node:path";
 import { WebSocketServer } from "ws";
 import { serveFetchProxy } from "./fetch-proxy.ts";
 import { DailyCounter, mintToken, verifyToken } from "./tokens.ts";
-import { defaultAllowlist, serveWisp } from "./wisp.ts";
+import { serveWisp } from "./wisp.ts";
 
 const env = process.env;
 const appPort = Number(env.PORT ?? 8080);
@@ -32,16 +32,30 @@ const limits = {
   relayBytesPerTokenPerDay: Number(env.SPARKBOX_RELAY_BYTES_PER_DAY ?? 2 * 1024 ** 3),
   maxTokens: Number(env.SPARKBOX_MAX_OUTPUT_TOKENS ?? 16_000),
 };
-const allowlist = (env.SPARKBOX_RELAY_ALLOWLIST ?? defaultAllowlist.join(","))
+// The relay reaches any public host on 80/443 unless this narrows it to a
+// list of names (exact or `*.suffix`).
+const allowlist = (env.SPARKBOX_RELAY_ALLOWLIST ?? "")
   .split(",")
   .map((host) => host.trim().toLowerCase())
   .filter(Boolean);
+// Browsers send the page's origin on WebSocket upgrades; only Sparkbox pages
+// may open the relay. Other tools can forge it, which is why the relay also
+// needs a short-lived ticket minted for an invite.
+const relayOrigins = new Set(
+  [publicOrigin, ...(env.SPARKBOX_RELAY_ORIGINS ?? "").split(",")]
+    .map((origin) => origin.trim().toLowerCase().replace(/\/$/, ""))
+    .filter(Boolean),
+);
+const relayTicketDays = Number(env.SPARKBOX_RELAY_TICKET_DAYS ?? 1);
+const relayConnectionsPerInvite = Number(env.SPARKBOX_RELAY_CONNECTIONS ?? 8);
+const relayStreamsPerConnection = Number(env.SPARKBOX_RELAY_STREAMS ?? 256);
 const freeAgentEnabled = Boolean(secret && openRouterKey && inviteCodes.length);
 if (!secret)
   console.warn("SPARKBOX_TOKEN_SECRET is not set; invite tokens and the relay are disabled.");
 
 const requests = new DailyCounter();
 const relayBytes = new DailyCounter();
+const relayConnections = new Map<string, number>();
 
 const isolation: Record<string, string> = {
   "Cross-Origin-Opener-Policy": "same-origin",
@@ -149,6 +163,19 @@ async function handleApi(request: IncomingMessage, response: ServerResponse, url
     log(`invite accepted from ${ip}`);
     return sendJson(response, 200, { token: mintToken(secret) });
   }
+  if (url.pathname === "/api/relay" && request.method === "POST") {
+    // A short-lived ticket for the WISP relay, so the sandbox's connection URL
+    // never carries the invite token and a copied URL expires on its own.
+    if (!secret) return sendJson(response, 503, { error: "The relay is not enabled." });
+    const session = verifyToken(secret, bearer(request));
+    if (!session) return sendJson(response, 401, { error: "Enter a valid invite code first." });
+    if (requests.add(`relay:${session.id}`) > 200)
+      return sendJson(response, 429, { error: "Too many relay sessions today." });
+    const ticket = mintToken(secret, relayTicketDays, { scope: "relay", id: session.id });
+    return sendJson(response, 200, {
+      url: `${publicOrigin.replace(/^http/, "ws")}/wisp/${encodeURIComponent(ticket)}/`,
+    });
+  }
   if (url.pathname === "/api/fetch") {
     // The download tool's fallback for sites without CORS headers. Bytes count
     // against the same daily budget as the relay. URLs are never logged.
@@ -184,16 +211,26 @@ async function handleApi(request: IncomingMessage, response: ServerResponse, url
     body.model = freeModel;
     if (typeof body.max_tokens !== "number" || body.max_tokens > limits.maxTokens)
       body.max_tokens = limits.maxTokens;
-    const upstream = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${openRouterKey}`,
-        "content-type": "application/json",
-        "HTTP-Referer": publicOrigin || "https://sparkbox.local",
-        "X-Title": "Sparkbox",
-      },
-      body: JSON.stringify(body),
-    });
+    let upstream: Response;
+    try {
+      upstream = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${openRouterKey}`,
+          "content-type": "application/json",
+          "HTTP-Referer": publicOrigin || "https://sparkbox.local",
+          "X-Title": "Sparkbox",
+        },
+        body: JSON.stringify(body),
+      });
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      log(`agent ${session.id}: OpenRouter unreachable: ${reason}`);
+      return sendJson(response, 502, {
+        error: { message: `The host could not reach OpenRouter: ${reason}` },
+      });
+    }
+    if (!upstream.ok) log(`agent ${session.id}: OpenRouter ${upstream.status}`);
     const headers: Record<string, string> = { ...isolation };
     for (const name of ["content-type", "cache-control", "x-request-id"]) {
       const value = upstream.headers.get(name);
@@ -254,16 +291,42 @@ app.on("upgrade", (request, socket, head) => {
     socket.destroy();
     return;
   }
-  const session = verifyToken(secret, match[1] ?? url.searchParams.get("token"));
+  // A complete response, so proxies and clients see a refusal rather than a
+  // connection that dropped mid-message.
+  const refuse = (status: number, reason: string) => {
+    const body = `${reason}\n`;
+    socket.end(
+      `HTTP/1.1 ${status} ${reason}\r\ncontent-type: text/plain\r\ncontent-length: ${Buffer.byteLength(body)}\r\nconnection: close\r\n\r\n${body}`,
+    );
+  };
+  const origin = String(request.headers.origin ?? "")
+    .toLowerCase()
+    .replace(/\/$/, "");
+  if (!origin || (relayOrigins.size && !relayOrigins.has(origin))) {
+    log(`relay refused from origin ${origin || "(none)"}`);
+    return refuse(403, "Forbidden");
+  }
+  // Only relay tickets open the relay; invite tokens do not.
+  const session = verifyToken(secret, match[1] ?? url.searchParams.get("token"), "relay");
   if (!session) {
-    socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
-    socket.destroy();
-    return;
+    log("relay refused: invalid or expired ticket");
+    return refuse(401, "Unauthorized");
+  }
+  if ((relayConnections.get(session.id) ?? 0) >= relayConnectionsPerInvite) {
+    log(`relay refused for ${session.id}: too many connections`);
+    return refuse(429, "Too Many Requests");
   }
   relay.handleUpgrade(request, socket, head, (ws) => {
+    relayConnections.set(session.id, (relayConnections.get(session.id) ?? 0) + 1);
     log(`relay open for ${session.id}`);
+    ws.on("close", () => {
+      const left = (relayConnections.get(session.id) ?? 1) - 1;
+      if (left > 0) relayConnections.set(session.id, left);
+      else relayConnections.delete(session.id);
+    });
     serveWisp(ws, {
       allowlist,
+      maxStreams: relayStreamsPerConnection,
       byteBudget: Math.max(0, limits.relayBytesPerTokenPerDay - relayBytes.get(session.id)),
       onBytes: (count) => relayBytes.add(session.id, count),
       log: (message) => log(`relay ${session.id}: ${message}`),
@@ -272,6 +335,10 @@ app.on("upgrade", (request, socket, head) => {
 });
 
 app.listen(appPort, () =>
-  log(`app on :${appPort}, dist ${distDir}, free agent ${freeAgentEnabled ? freeModel : "off"}`),
+  log(
+    `app on :${appPort}, dist ${distDir}, free agent ${freeAgentEnabled ? freeModel : "off"}, relay ${
+      secret ? (allowlist.length ? `to ${allowlist.length} hosts` : "to any public host") : "off"
+    } for ${[...relayOrigins].join(", ") || "any origin"}`,
+  ),
 );
 preview.listen(previewPort, () => log(`preview host on :${previewPort}`));

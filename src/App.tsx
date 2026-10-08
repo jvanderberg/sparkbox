@@ -5,7 +5,7 @@ import { AgentRunner } from "./agent/runner.ts";
 import { isSecretName } from "./agent/secrets.ts";
 import { settings } from "./agent/settings.ts";
 import { Field, Modal } from "./components.tsx";
-import { type HostConfig, hostConfig } from "./config.ts";
+import { type HostConfig, hostConfig, relayUrl } from "./config.ts";
 import { Loading } from "./Loading.tsx";
 import { defaultPreviewOrigin, previewPort, usePreview } from "./Preview.tsx";
 import { queryPreview } from "./preview-bridge.ts";
@@ -405,19 +405,29 @@ function ProjectSession({
     let active = true;
     let created: WasmerSandbox | null = null;
     // Outbound network: a relay the user configured, or the host's relay
-    // when this browser holds an invite token.
+    // through a short-lived ticket when this browser holds an invite token.
     const token = settings.key("sparkbox");
-    const wispUrl =
-      settings.wispUrl() ||
-      (host.wispUrl && token ? `${host.wispUrl}${encodeURIComponent(token)}/` : "");
-    void WasmerSandbox.create({
-      workspace: project.id,
-      template: starterTemplate(project.name),
-      wispUrl: wispUrl || undefined,
-      onProgress: (value) => {
-        if (active) setProgress(value);
-      },
-    })
+    const relay = settings.wispUrl()
+      ? Promise.resolve(settings.wispUrl())
+      : host.wispUrl && token
+        ? relayUrl(token).catch((cause: Error) => {
+            console.warn(`Network relay unavailable: ${cause.message}`);
+            return "";
+          })
+        : Promise.resolve("");
+    let wispUrl = "";
+    relay
+      .then((url) => {
+        wispUrl = url;
+        return WasmerSandbox.create({
+          workspace: project.id,
+          template: starterTemplate(project.name),
+          wispUrl: wispUrl || undefined,
+          onProgress: (value) => {
+            if (active) setProgress(value);
+          },
+        });
+      })
       .then((instance) => {
         if (!active) return void instance.close({ persist: false });
         created = instance;
