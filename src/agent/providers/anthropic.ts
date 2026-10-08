@@ -94,6 +94,7 @@ export class AnthropicSession implements ProviderSession {
             preview: context.preview,
             signal: context.signal,
             fetchProxy: context.fetchProxy,
+            secrets: context.secrets,
           });
           if (page) {
             output = page.output;

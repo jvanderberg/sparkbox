@@ -3,6 +3,9 @@ import type { PreviewController } from "../src/agent/preview-controller.ts";
 import { downloadTool, previewTool } from "../src/agent/tools.ts";
 import { MemorySandbox } from "../src/sandbox/memory.ts";
 
+/** Builds a ${NAME} placeholder without tripping the template-literal lint. */
+const placeholder = (name: string) => `$\{${name}}`;
+
 afterEach(() => vi.unstubAllGlobals());
 
 describe("download tool", () => {
@@ -70,6 +73,30 @@ describe("download tool through the host proxy", () => {
       },
     ]);
     expect(await sandbox.readText("data/arrivals.json")).toBe('{"ok":true}');
+  });
+  it("substitutes secrets in the URL and shows the placeholder in messages", async () => {
+    const urls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL) => {
+        urls.push(String(input));
+        return new Response("[]", { headers: { "content-type": "application/json" } });
+      }),
+    );
+    const sandbox = new MemorySandbox();
+    const result = await downloadTool(
+      sandbox,
+      {
+        url: `https://api.example.org/arrivals?key=${placeholder("API_KEY")}&id=1`,
+        path: "data/a.json",
+      },
+      undefined,
+      undefined,
+      { API_KEY: "s3cret-value" },
+    );
+    expect(urls).toEqual(["https://api.example.org/arrivals?key=s3cret-value&id=1"]);
+    expect(result.output).toMatch(/Saved data\/a\.json/);
+    expect(result.output).not.toContain("s3cret-value");
   });
   it("reports the proxy's own refusal", async () => {
     vi.stubGlobal(

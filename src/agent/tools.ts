@@ -4,6 +4,7 @@ import { type Sandbox, workspacePath } from "../sandbox/types.ts";
 import { FILE_LIMIT } from "../workspace/types.ts";
 import { applyUpdate, parseUpdateBody } from "./apply-patch.ts";
 import type { PreviewController } from "./preview-controller.ts";
+import { type Secrets, substituteSecrets } from "./secrets.ts";
 
 export const outputLimit = 16_000;
 
@@ -311,13 +312,17 @@ export async function downloadTool(
   args: Record<string, unknown>,
   signal?: AbortSignal,
   proxy?: FetchProxy,
+  secrets: Secrets = {},
 ): Promise<ToolOutcome> {
+  // ${NAME} placeholders name project secrets; messages show the URL as written.
+  const written = String(args.url ?? "");
   let url: URL;
   try {
-    url = new URL(String(args.url ?? ""));
+    url = new URL(substituteSecrets(written, secrets));
   } catch {
     return { output: "A valid http(s) URL is required.", error: true };
   }
+  const shown = written;
   if (!/^https?:$/.test(url.protocol))
     return { output: "Only http and https URLs can be downloaded.", error: true };
   const relative = workspacePath(
@@ -333,7 +338,7 @@ export async function downloadTool(
     const reason = error instanceof Error ? error.message : String(error);
     if (!proxy || signal?.aborted)
       return {
-        output: `Could not fetch ${url.href}: ${reason}. The server probably does not allow cross-origin reads. Ask the user to download the file and upload it through Files, or use a source that supports CORS.`,
+        output: `Could not fetch ${shown}: ${reason}. The server probably does not allow cross-origin reads. Ask the user to download the file and upload it through Files, or use a source that supports CORS.`,
         error: true,
       };
     // The site refused the browser (no CORS headers); let the host fetch it.
@@ -344,7 +349,7 @@ export async function downloadTool(
       });
     } catch (proxyError) {
       return {
-        output: `Could not fetch ${url.href}: the browser was refused (${reason}) and the host proxy failed (${proxyError instanceof Error ? proxyError.message : String(proxyError)}). Ask the user to download the file and upload it through Files.`,
+        output: `Could not fetch ${shown}: the browser was refused (${reason}) and the host proxy failed (${proxyError instanceof Error ? proxyError.message : String(proxyError)}). Ask the user to download the file and upload it through Files.`,
         error: true,
       };
     }
@@ -352,13 +357,13 @@ export async function downloadTool(
     if (!response.ok) {
       const detail = (await response.json().catch(() => ({}))) as { error?: string };
       return {
-        output: `Fetching ${url.href} through the host failed with HTTP ${response.status}${detail.error ? `: ${detail.error}` : ""}.`,
+        output: `Fetching ${shown} through the host failed with HTTP ${response.status}${detail.error ? `: ${detail.error}` : ""}.`,
         error: true,
       };
     }
   }
   if (!response.ok)
-    return { output: `Fetching ${url.href} failed with HTTP ${response.status}.`, error: true };
+    return { output: `Fetching ${shown} failed with HTTP ${response.status}.`, error: true };
   const declared = Number(response.headers.get("content-length") ?? 0);
   if (declared > FILE_LIMIT) return { output: "The file exceeds the 25 MiB limit.", error: true };
   const bytes = new Uint8Array(await response.arrayBuffer());
@@ -484,10 +489,17 @@ export async function runPageTool(
     preview?: PreviewController;
     signal?: AbortSignal;
     fetchProxy?: FetchProxy;
+    secrets?: Secrets;
   },
 ): Promise<ToolOutcome | null> {
   if (name === "download")
-    return downloadTool(context.sandbox, args, context.signal, context.fetchProxy);
+    return downloadTool(
+      context.sandbox,
+      args,
+      context.signal,
+      context.fetchProxy,
+      context.secrets ?? {},
+    );
   if (name === "preview") return previewTool(context.preview, args);
   return null;
 }

@@ -137,6 +137,7 @@
   :is(
     .event-picker select,
     .field input,
+    .secret-row input,
     .field select,
     .field textarea,
     .share-row input,

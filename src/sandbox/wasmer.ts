@@ -91,6 +91,8 @@ export class WasmerSandbox implements Sandbox {
   private saving: Promise<void> | null = null;
   private restarting: Promise<void> | null = null;
   private probing: Promise<void> | null = null;
+  /** Extra environment for every command and server (project secrets). */
+  private environment: Record<string, string> = {};
   private detachErrorListener: (() => void) | null = null;
   private processes = new Set<Process>();
   private servers = new Map<number, BrowserServer>();
@@ -234,6 +236,11 @@ export class WasmerSandbox implements Sandbox {
     return this.restarting;
   }
 
+  /** Environment variables added to every command and preview server from now on. */
+  setEnvironment(environment: Record<string, string>) {
+    this.environment = { ...environment };
+  }
+
   /** Called after an automatic restart; preview servers are gone by then. */
   onRestart(listener: () => void) {
     this.restartListeners.add(listener);
@@ -262,12 +269,14 @@ export class WasmerSandbox implements Sandbox {
     const timeoutMs = options.timeoutMs ?? 120_000;
     const process = await this.recover(() =>
       deadline(
-        this.handle.shell(command, { cwd: this.root, env: options.env }).spawn({
-          stdin: "closed",
-          stdout: "pipe",
-          stderr: "pipe",
-          timeoutMs,
-        }),
+        this.handle
+          .shell(command, { cwd: this.root, env: { ...this.environment, ...options.env } })
+          .spawn({
+            stdin: "closed",
+            stdout: "pipe",
+            stderr: "pipe",
+            timeoutMs,
+          }),
         SPAWN_DEADLINE_MS,
         "start a process",
       ),
@@ -500,7 +509,7 @@ export class WasmerSandbox implements Sandbox {
     const process = await this.recover(() =>
       deadline(
         this.handle
-          .shell(command, { cwd: this.root })
+          .shell(command, { cwd: this.root, env: { ...this.environment } })
           .spawn({ stdin: "pipe", stdout: "pipe", stderr: "pipe" }),
         SPAWN_DEADLINE_MS,
         "start a process",
