@@ -200,6 +200,9 @@ export default defineConfig({
     strictPort: true,
     headers: isolation,
     allowedHosts: [".ts.net"],
+    // Benchmark exports under artifacts/ include tsconfig.json files, which
+    // would otherwise force a full reload of the app under test.
+    watch: { ignored: ["**/artifacts/**"] },
     // The host process (npm run dev:server) provides config, invites, the
     // free-agent proxy and the WISP relay during development.
     proxy: {

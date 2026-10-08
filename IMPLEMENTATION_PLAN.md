@@ -24,6 +24,8 @@ Status as of 2026-10-05. Prototype only.
 - [x] Same-origin WebSockets from preview pages (2026-10-07): the injected bridge shim posts socket operations to the Sparkbox tab, which relays them to a bridge process in the sandbox holding real sockets. Verified by `scripts/ws-smoke.ts` locally and on Fly.
 - [x] Vite 7 dev server inside the sandbox (2026-10-07): Edge.js cannot execute WebAssembly or native binaries, so `.sparkbox/vite.mjs` rewrites the installed Vite to use an esbuild client that forwards calls over stdio to esbuild-wasm in the page (plugin hooks are called back in the sandbox, files go through the sandbox filesystem), acorn for Rollup's parser and the asm.js import lexer. Watching is event-driven (exact paths from the page, a workspace diff after each shell command, a ten-second content scan only as a fallback). Verified by `scripts/vite-smoke.ts`: config bundling, TypeScript entry, CSS hot update without reload, React pre-bundling, Fast Refresh with state preserved for page and shell edits.
 
+- [x] Prompt benchmark (2026-10-08): `scripts/benchmark-run.ts` drives the in-page agent through the real UI on the Oak Park transit brief (`docs/benchmark.md`, reports in `docs/benchmark-runs/`). The baseline run never got the app running; the prompt now states what the relay reaches, which native tools do not run, that the Vite launcher appears when the preview starts and that `vite build` cannot run from a shell, that data typed from memory is invented, and when to stop and report. Found and fixed on the way: the preview probe's forced light/dark schemes were inverted by an extra escape level in the bridge script (the browser smoke now asserts on the rendered background), and exports under `artifacts/` triggered dev-server reloads.
+
 ## Not done
 
 - [x] Anthropic adapter verified live on 2026-10-05 with Opus 5.5 (`npm run test:live:anthropic`): bash and text-editor tools, streamed reply, preview, changes and transcript restore after reload. Fixed a doubled-delta bug from a StrictMode double subscription.
@@ -37,6 +39,7 @@ Status as of 2026-10-05. Prototype only.
 - [ ] Remove the leftover Civic Spark portal CSS from `src/styles.css` and the unused `claude`/`opencode` provider names in `src/agents/protocol.ts`.
 - [ ] Vite 8 (Rolldown) in the sandbox: needs the two-way plugin callbacks bridged to Rolldown's browser build; Vite 7 is pinned until then.
 - [ ] Tailwind v4 in the sandbox: its core is JavaScript but Lightning CSS and the Oxide scanner are native; run them in the page through the same channel.
+- [ ] Sandbox hangs seen in the benchmark: a failed `vite build` from a shell (the esbuild package trying to start its binary) leaves every later command hanging and Stop cannot end the turn; a second small `pnpm add` can hang past its timeout; the provider session is persisted only when a turn ends, so a reload after a stuck turn reverts the model's memory to the previous turn. Reproduced with `sparkboxExec` on 2026-10-08.
 - [ ] Reproduce the "Scheduler is dead" crash deliberately to confirm the automatic rebuild path end to end; today it is covered by code review and the recovery wrapper only.
 - [ ] Explain blocked network requests in the preview (which host, why) instead of a generic module error.
 - [ ] Questions from the agent to the user (the timeline supports approval events; no provider wiring yet).

@@ -163,6 +163,15 @@ async function run(label: string, options: { mobile?: boolean; dark?: boolean })
     .getByRole("heading", { name: `Reloaded Smoke ${label}` })
     .waitFor({ timeout: 15_000 });
   console.log(`${label} live reload ok`);
+  // A stylesheet with a dark media rule, so the forced schemes can be checked on
+  // the rendering rather than on the outline's label.
+  await page.evaluate(() =>
+    (window as unknown as { sparkboxWrite: (p: string, c: string) => Promise<void> }).sparkboxWrite(
+      "styles.css",
+      ":root{color-scheme:light dark}body{background:rgb(250,250,250)}@media (prefers-color-scheme: dark){body{background:rgb(17,19,24)}}",
+    ),
+  );
+  await page.waitForTimeout(2000);
   // The agent's preview tool: a text outline, the error list and a phone screenshot
   // captured through hidden probe frames.
   const tool = await page.evaluate(async () => {
@@ -178,6 +187,9 @@ async function run(label: string, options: { mobile?: boolean; dark?: boolean })
     const text = (await query({ format: "text", viewport: "phone", scheme: "dark" })) as {
       text: string;
     };
+    const light = (await query({ format: "text", viewport: "phone", scheme: "light" })) as {
+      text: string;
+    };
     const errors = (await query({ format: "errors" })) as { errors: string[] };
     const shot = (await query({ format: "screenshot", viewport: "phone" })) as {
       image: string;
@@ -186,6 +198,7 @@ async function run(label: string, options: { mobile?: boolean; dark?: boolean })
     };
     return {
       text: text.text.slice(0, 400),
+      light: light.text.slice(0, 400),
       errors: errors.errors,
       width: shot.width,
       height: shot.height,
@@ -196,9 +209,11 @@ async function run(label: string, options: { mobile?: boolean; dark?: boolean })
   if (
     !tool.text.includes(`# Reloaded Smoke ${label}`) ||
     !tool.text.includes("[button] Clicked") ||
-    !tool.text.includes("Color scheme: dark (forced)")
+    !tool.text.includes("\nColor scheme: dark (forced)\nBackground: rgb(17, 19, 24)\n")
   )
     throw new Error(`preview text outline is wrong: ${tool.text}`);
+  if (!tool.light.includes("\nColor scheme: light (forced)\nBackground: rgb(250, 250, 250)\n"))
+    throw new Error(`forced light scheme did not apply: ${tool.light}`);
   if (tool.errors.length) throw new Error(`fresh load reported errors: ${tool.errors.join(", ")}`);
   if (tool.width !== 390 || tool.height !== 844 || tool.bytes < 2000)
     throw new Error(`screenshot is wrong: ${JSON.stringify(tool)}`);

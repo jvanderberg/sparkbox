@@ -1,0 +1,16 @@
+Build the Oak Park Transit app described in PROJECT.md. Use the networked stack from your guidance: React + TypeScript + Vite + Tailwind CSS + Biome, with shadcn/ui components (Card, Tabs, Badge, Button, Sheet or Drawer, Table, Switch, Tooltip as appropriate).
+
+The CTA API key is {{CTA_KEY}}. Store it only in .env.local as VITE_CTA_TRAIN_API_KEY and VITE_CTA_BUS_API_KEY (same value; CTA issues separate keys, so the bus one may need replacing later). Never print it, never copy it into any other file, and never show it in your replies.
+
+Requirements:
+
+1. A Leaflet map (OpenStreetMap tiles, attribution visible) centered on Oak Park, Illinois showing: the CTA Green Line stations in Oak Park (Austin, Ridgeland, Oak Park, Harlem/Lake) and the CTA Blue Line stations (Austin, Oak Park, Harlem on the Forest Park branch); the Metra UP-West Oak Park station; and the bus routes that serve Oak Park (CTA 20 Madison, 86 Narragansett/Ridgeland, 90 Harlem, 91 Austin, 126 Jackson, and Pace 305, 307, 309, 311, 313 where they run in Oak Park). Use real stop coordinates. Draw the Green and Blue Line alignments through Oak Park as polylines in the CTA's line colors.
+2. An arrivals panel ("Next arrivals") per station, and a route list. The browser cannot call the CTA Train Tracker and Bus Tracker APIs directly (no CORS), so build a data adapter with two implementations: a snapshot in data/ (clearly labeled in the UI with its timestamp) and a stub for the live CTA APIs documented in README.md with the exact endpoints (Train Tracker `ttarrivals.aspx` by `mapid`, Bus Tracker `getpredictions` by `stpid`) and the note that a small proxy would be required for CORS. Since you have network, test the key once from a Node script against Train Tracker (`https://lapi.transitchicago.com/api/1.0/ttarrivals.aspx?key=$VITE_CTA_TRAIN_API_KEY&mapid=40020&outputType=JSON`, Harlem/Lake mapid 40020) and capture a real snapshot of arrivals for the Oak Park stations into data/ with its retrieval timestamp. If the key fails, say so and use clearly labeled sample data. Never invent that data is live.
+3. Static reference data in data/: stations with CTA map IDs and stop IDs where known, bus routes with endpoints and the Oak Park segments, and data/SOURCES.md recording each source URL (CTA GTFS and developer docs, Metra, Pace, OpenStreetMap) and retrieval date. Where you cannot fetch a source, say so in SOURCES.md and label the data approximate.
+4. Mobile-first layout: map plus a bottom sheet or tabs for arrivals and routes on phones; a sidebar on desktop. 44px touch targets, 16px inputs, safe-area padding, no page-wide horizontal overflow; the map and tables scroll within their own regions. Follow the system color scheme, including a dark map tile style switch if cheap (otherwise keep OSM tiles and darken the UI only).
+5. A header with the app name "Oak Park Transit", a snapshot badge with the snapshot time, and a last-updated indicator.
+
+Process requirements:
+- Keep a short BUILD_LOG.md recording the steps you took, decisions, what you verified with the preview tool, and anything unverified. This log is part of the benchmark.
+- Run Biome, tsc and the Vite build before finishing. Fix what they report.
+- Final message: how to run it, what is verified with preview screenshots and what is not, and known gaps. Under 300 words.
