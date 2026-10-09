@@ -9,6 +9,7 @@ import {
   summaryAcknowledgement,
   summaryInstructions,
   summaryMessage,
+  summaryOutputCap,
   summaryWords,
   trimmedResultLimit,
 } from "../compaction.ts";
@@ -137,7 +138,7 @@ export class AnthropicSession implements ProviderSession {
       const message = await this.client.messages.create(
         {
           model: this.model,
-          max_tokens: Math.ceil(words * 3) + 500,
+          max_tokens: summaryOutputCap,
           system: summaryInstructions(words),
           messages: [{ role: "user", content: transcript }],
         },

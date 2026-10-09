@@ -13,6 +13,7 @@ import {
   summaryAcknowledgement,
   summaryInstructions,
   summaryMessage,
+  summaryOutputCap,
   summaryWords,
   trimmedResultLimit,
 } from "../compaction.ts";
@@ -138,15 +139,14 @@ export class OpenRouterSession implements ProviderSession {
             { role: "system", content: summaryInstructions(words) },
             { role: "user", content: transcript },
           ],
-          // Room for the words, plus headroom for a model that reasons before
-          // it writes (those tokens count against the same cap).
-          max_tokens: Math.ceil(words * 3) + 3000,
+          max_tokens: summaryOutputCap,
         },
         { signal },
       );
       summary = completion.choices[0]?.message.content ?? "";
       if (!summary.trim() && completion.choices[0]?.finish_reason === "length")
         throw new Error("The model ran out of output tokens before writing the summary.");
+      // A cut-off summary is still a summary; the prompt's word count is the real limit.
     } catch (error) {
       throw describeFailure(error);
     }

@@ -38,6 +38,13 @@ export function summaryInstructions(words: number) {
   return `You are compacting the earlier part of a coding session between a user and an agent working in a sandboxed project. Write a summary the agent can continue from without the original messages. Include, in this order: the user's goal and any constraints they stated; what was built or changed, naming files and commands precisely; decisions and why; problems hit and how they were fixed or left; what the user last asked for and what remains open. Keep facts exact (names, paths, ports, URLs, versions); drop pleasantries, repeated tool output and anything superseded. Plain prose and short lists, under ${words} words. Do not address the user; this text is for the agent.`;
 }
 
+/**
+ * The output cap on a summary request. The prompt's word count sets the
+ * length; this only stops a runaway. It is generous because models that
+ * reason before writing spend a variable share of it on reasoning.
+ */
+export const summaryOutputCap = 16_000;
+
 /** Trimming within kept turns, the step before folding: images to keep and the size old tool results shrink to. */
 export const keepImages = 2;
 export const trimmedResultLimit = 1500;
