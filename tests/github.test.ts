@@ -1,3 +1,7 @@
+import { spawnSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { GitHubClient, GitHubError } from "../src/github/api.ts";
 import {
@@ -6,6 +10,7 @@ import {
   pagesWorkflow,
   projectKind,
   repositoryName,
+  siteCheckScript,
   workflowPath,
 } from "../src/github/git.ts";
 import { publishFiles, siteState } from "../src/github/sync.ts";
@@ -45,6 +50,7 @@ describe("projectKind and publishFiles", () => {
     // biome-ignore lint/suspicious/noTemplateCurlyInString: an Actions expression, not a template
     expect(workflow).toContain("--base=/${{ github.event.repository.name }}/");
     expect(workflow).toContain("actions/deploy-pages@v4");
+    expect(workflow).toContain("Check that the files the app fetches were published");
     const stat = publishFiles({ "index.html": text("<html>") });
     expect(stat.kind).toBe("static");
     expect(Object.keys(stat.added)).toEqual([".nojekyll"]);
@@ -52,6 +58,44 @@ describe("projectKind and publishFiles", () => {
       Object.keys(publishFiles({ "index.html": text(""), ".nojekyll": text("") }).added),
     ).toEqual([]);
     expect(pagesWorkflow({ pnpm: false })).toContain("npm install --ignore-scripts");
+  });
+  it("fails the build when the app fetches a project file the site lacks or a root path", () => {
+    const check = (files: Record<string, string>) => {
+      const root = mkdtempSync(join(tmpdir(), "sparkbox-site-"));
+      try {
+        for (const [path, content] of Object.entries(files)) {
+          mkdirSync(dirname(join(root, path)), { recursive: true });
+          writeFileSync(join(root, path), content);
+        }
+        const run = spawnSync(process.execPath, ["-"], {
+          cwd: root,
+          input: siteCheckScript,
+          env: { ...process.env, SITE_BASE: "/demo/" },
+          encoding: "utf8",
+        });
+        return { status: run.status, errors: run.stderr };
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    };
+    const app =
+      'fetch("/demo/data/stops.json");fetch("https://example.com/x.json");fetch("package.json")';
+    const missing = check({
+      "data/stops.json": "[]",
+      "package.json": "{}",
+      "dist/index.html": "<html>",
+      "dist/assets/index.js": app,
+    });
+    expect(missing.status).toBe(1);
+    expect(missing.errors).toContain("Move it to public/data/stops.json");
+    expect(missing.errors.trim().split("\n")).toHaveLength(1);
+    expect(check({ "dist/data/stops.json": "[]", "dist/assets/index.js": app }).status).toBe(0);
+    const rooted = check({
+      "dist/data/stops.json": "[]",
+      "dist/assets/index.js": 'fetch("/data/stops.json")',
+    });
+    expect(rooted.status).toBe(1);
+    expect(rooted.errors).toContain("points at the domain root");
   });
   it("refreshes a workflow Sparkbox wrote and leaves an edited one alone", () => {
     const manifest = text('{"devDependencies":{"vite":"^7"}}');
