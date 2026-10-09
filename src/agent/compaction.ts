@@ -29,7 +29,30 @@ export function splitOldestTurns<T>(
   return { folded: messages.slice(0, cut), kept: messages.slice(cut), turns: count };
 }
 
-export const summaryInstructions = `You are compacting the earlier part of a coding session between a user and an agent working in a sandboxed project. Write a summary the agent can continue from without the original messages. Include, in this order: the user's goal and any constraints they stated; what was built or changed, naming files and commands precisely; decisions and why; problems hit and how they were fixed or left; what the user last asked for and what remains open. Keep facts exact (names, paths, ports, URLs, versions); drop pleasantries, repeated tool output and anything superseded. Plain prose and short lists, under 700 words. Do not address the user; this text is for the agent.`;
+/** How long a summary may be: a word per 40 folded tokens, within reason. */
+export function summaryWords(foldedTokens: number) {
+  return Math.min(1500, Math.max(300, Math.round(foldedTokens / 40)));
+}
+
+export function summaryInstructions(words: number) {
+  return `You are compacting the earlier part of a coding session between a user and an agent working in a sandboxed project. Write a summary the agent can continue from without the original messages. Include, in this order: the user's goal and any constraints they stated; what was built or changed, naming files and commands precisely; decisions and why; problems hit and how they were fixed or left; what the user last asked for and what remains open. Keep facts exact (names, paths, ports, URLs, versions); drop pleasantries, repeated tool output and anything superseded. Plain prose and short lists, under ${words} words. Do not address the user; this text is for the agent.`;
+}
+
+/** Trimming within kept turns, the step before folding: images to keep and the size old tool results shrink to. */
+export const keepImages = 2;
+export const trimmedResultLimit = 1500;
+export const imagePlaceholder = "[screenshot removed to stay within the context limit]";
+
+export type Pruned = { images: number; results: number };
+
+export function pruneNotice(pruned: Pruned) {
+  const parts: string[] = [];
+  if (pruned.images)
+    parts.push(`${pruned.images} older ${pruned.images === 1 ? "screenshot" : "screenshots"}`);
+  if (pruned.results)
+    parts.push(`${pruned.results} older tool ${pruned.results === 1 ? "result" : "results"}`);
+  return `Trimmed ${parts.join(" and ")} to stay within the context limit.`;
+}
 
 /** The message that stands in for the folded turns. */
 export function summaryMessage(summary: string) {
@@ -41,8 +64,12 @@ export const summaryAcknowledgement = "Understood. I'll continue from that state
 /** Trim a tool result or long text for the summarizer's input. */
 export function excerpt(text: string, limit = 1500) {
   if (text.length <= limit) return text;
-  const head = Math.floor(limit * 0.7);
-  return `${text.slice(0, head)}\n…[${text.length - limit} characters omitted]…\n${text.slice(-(limit - head))}`;
+  // The result never exceeds `limit`, so trimming again is a no-op.
+  const marker = `\n…[${text.length} characters omitted]…\n`;
+  const budget = Math.max(0, limit - marker.length);
+  const head = Math.floor(budget * 0.7);
+  const tail = budget - head;
+  return `${text.slice(0, head)}\n…[${text.length - head - tail} characters omitted]…\n${text.slice(text.length - tail)}`;
 }
 
 /** A rough token count for serialized messages: text at four characters per token, images flat. */

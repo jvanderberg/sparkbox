@@ -2,10 +2,15 @@ import Anthropic from "@anthropic-ai/sdk";
 import {
   estimateTokens,
   excerpt,
+  imagePlaceholder,
+  keepImages,
+  pruneNotice,
   splitOldestTurns,
   summaryAcknowledgement,
   summaryInstructions,
   summaryMessage,
+  summaryWords,
+  trimmedResultLimit,
 } from "../compaction.ts";
 import { pageTools, runPageTool, runShell, textEditor } from "../tools.ts";
 import { describeFailure, type Prompt, type ProviderSession, type TurnContext } from "./types.ts";
@@ -60,17 +65,74 @@ export class AnthropicSession implements ProviderSession {
     return estimateTokens(text, images);
   }
 
+  prune() {
+    const pruned = { images: 0, results: 0 };
+    let seen = 0;
+    const replaceImages = (blocks: { type: string; text?: string }[]) => {
+      for (let j = blocks.length - 1; j >= 0; j--) {
+        if (blocks[j]?.type !== "image") continue;
+        if (seen++ < keepImages) continue;
+        blocks[j] = { type: "text", text: imagePlaceholder };
+        pruned.images++;
+      }
+    };
+    for (let i = this.messages.length - 1; i >= 0; i--) {
+      const message = this.messages[i];
+      if (message?.role !== "user" || typeof message.content === "string") continue;
+      // Screenshots arrive inside tool results; pasted images in the prompt itself.
+      for (let j = message.content.length - 1; j >= 0; j--) {
+        const block = message.content[j];
+        if (block?.type === "tool_result" && Array.isArray(block.content))
+          replaceImages(block.content as { type: string; text?: string }[]);
+      }
+      replaceImages(message.content as { type: string; text?: string }[]);
+    }
+    const lastUser = this.messages.findLastIndex(isUserPrompt);
+    for (let i = 0; i < lastUser; i++) {
+      const message = this.messages[i];
+      if (message?.role !== "user" || typeof message.content === "string") continue;
+      for (const block of message.content) {
+        if (block.type !== "tool_result") continue;
+        if (typeof block.content === "string") {
+          if (block.content.length <= trimmedResultLimit) continue;
+          block.content = excerpt(block.content, trimmedResultLimit);
+          pruned.results++;
+        } else if (Array.isArray(block.content)) {
+          for (const part of block.content) {
+            if (part.type !== "text" || part.text.length <= trimmedResultLimit) continue;
+            part.text = excerpt(part.text, trimmedResultLimit);
+            pruned.results++;
+          }
+        }
+      }
+    }
+    if (pruned.images || pruned.results) this.lastPromptTokens = null;
+    return pruned;
+  }
+
+  /** Mid-turn: a long tool loop can outgrow the limit before the turn ends. */
+  private trimIfOver(context: TurnContext) {
+    if (!context.contextLimit || (this.lastPromptTokens ?? 0) <= context.contextLimit) return;
+    const pruned = this.prune();
+    if (pruned.images || pruned.results) context.sink.status(pruneNotice(pruned));
+  }
+
+  turns() {
+    return this.messages.filter(isUserPrompt).length;
+  }
+
   async compact(fraction: number, signal?: AbortSignal) {
     const split = splitOldestTurns(this.messages, isUserPrompt, fraction);
     if (!split) return null;
     const transcript = split.folded.map(renderForSummary).filter(Boolean).join("\n\n");
+    const words = summaryWords(estimateTokens(JSON.stringify(split.folded), 0));
     let summary = "";
     try {
       const message = await this.client.messages.create(
         {
           model: this.model,
-          max_tokens: 1500,
-          system: summaryInstructions,
+          max_tokens: Math.ceil(words * 3) + 500,
+          system: summaryInstructions(words),
           messages: [{ role: "user", content: transcript }],
         },
         { signal },
@@ -121,6 +183,7 @@ export class AnthropicSession implements ProviderSession {
           message.usage.input_tokens +
           (message.usage.cache_read_input_tokens ?? 0) +
           (message.usage.cache_creation_input_tokens ?? 0);
+        this.trimIfOver(context);
       } catch (error) {
         // A failed request leaves the user turn in history so a retry resends it.
         throw describeFailure(error);

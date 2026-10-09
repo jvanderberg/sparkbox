@@ -3,10 +3,15 @@ import type { ResponseInputItem, Tool } from "openai/resources/responses/respons
 import {
   estimateTokens,
   excerpt,
+  imagePlaceholder,
+  keepImages,
+  pruneNotice,
   splitOldestTurns,
   summaryAcknowledgement,
   summaryInstructions,
   summaryMessage,
+  summaryWords,
+  trimmedResultLimit,
 } from "../compaction.ts";
 import {
   applyPatchOperation,
@@ -70,19 +75,73 @@ export class OpenAISession implements ProviderSession {
     return estimateTokens(text, images);
   }
 
+  prune() {
+    const pruned = { images: 0, results: 0 };
+    let seen = 0;
+    const replaceImages = (parts: { type: string; text?: string }[]) => {
+      for (let j = parts.length - 1; j >= 0; j--) {
+        if (parts[j]?.type !== "input_image") continue;
+        if (seen++ < keepImages) continue;
+        parts[j] = { type: "input_text", text: imagePlaceholder };
+        pruned.images++;
+      }
+    };
+    for (let i = this.items.length - 1; i >= 0; i--) {
+      const item = this.items[i];
+      if (!item) continue;
+      if ("role" in item && item.role === "user" && Array.isArray(item.content))
+        replaceImages(item.content as { type: string; text?: string }[]);
+      else if ("type" in item && item.type === "function_call_output" && Array.isArray(item.output))
+        replaceImages(item.output as { type: string; text?: string }[]);
+    }
+    const lastUser = this.items.findLastIndex(isUserPrompt);
+    for (let i = 0; i < lastUser; i++) {
+      const item = this.items[i];
+      if (!item || !("type" in item)) continue;
+      if (item.type === "function_call_output" && typeof item.output === "string") {
+        if (item.output.length <= trimmedResultLimit) continue;
+        item.output = excerpt(item.output, trimmedResultLimit);
+        pruned.results++;
+      } else if (item.type === "shell_call_output") {
+        for (const entry of item.output) {
+          if (entry.stdout.length + entry.stderr.length <= trimmedResultLimit) continue;
+          entry.stdout = excerpt(entry.stdout, trimmedResultLimit);
+          entry.stderr = excerpt(entry.stderr, 400);
+          pruned.results++;
+        }
+      }
+    }
+    if (pruned.images || pruned.results) this.lastPromptTokens = null;
+    return pruned;
+  }
+
+  /** Mid-turn: a long tool loop can outgrow the limit before the turn ends. */
+  private trimIfOver(context: TurnContext) {
+    if (!context.contextLimit || (this.lastPromptTokens ?? 0) <= context.contextLimit) return;
+    const pruned = this.prune();
+    if (pruned.images || pruned.results) context.sink.status(pruneNotice(pruned));
+  }
+
+  turns() {
+    return this.items.filter(isUserPrompt).length;
+  }
+
   async compact(fraction: number, signal?: AbortSignal) {
     const split = splitOldestTurns(this.items, isUserPrompt, fraction);
     if (!split) return null;
     const transcript = split.folded.map(renderForSummary).filter(Boolean).join("\n\n");
+    const words = summaryWords(estimateTokens(JSON.stringify(split.folded), 0));
     let summary: string;
     try {
       const response = await this.client.responses.create(
         {
           model: this.model,
-          instructions: summaryInstructions,
+          instructions: summaryInstructions(words),
           input: transcript,
           store: false,
-          max_output_tokens: 1500,
+          // Reasoning tokens count against this budget on reasoning models.
+          max_output_tokens: Math.ceil(words * 3) + 2000,
+          reasoning: { effort: "low" },
         },
         { signal },
       );
@@ -131,6 +190,7 @@ export class OpenAISession implements ProviderSession {
         stream.on("response.output_text.delta", (event) => context.sink.text(textId, event.delta));
         response = await stream.finalResponse();
         if (response.usage?.input_tokens) this.lastPromptTokens = response.usage.input_tokens;
+        this.trimIfOver(context);
       } catch (error) {
         throw describeFailure(error);
       }
