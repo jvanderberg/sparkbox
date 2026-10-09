@@ -6,6 +6,7 @@ import type {
   Sandbox as WasmerSandboxHandle,
 } from "@wasmer/sdk/browser";
 import { deadline, RuntimeHung } from "./deadline.ts";
+import { guestToolFiles, terminalPromptCode } from "./guest-tools.ts";
 import { loadSnapshot, saveSnapshot, saveSnapshotNow } from "./storage.ts";
 import {
   type ExecOptions,
@@ -78,13 +79,11 @@ const EXIT_GRACE_MS = 30_000;
 export const restartedNotice =
   "[the sandbox runtime stopped responding and was rebuilt; project files are intact, but node_modules is gone: start the preview again (it reinstalls dependencies) or run pnpm install]";
 
-type Boot = { client: WasmerClient; handle: WasmerSandboxHandle; shell: CommandRef };
+/** .sparkbox/bin holds the commands Sparkbox adds, git among them. */
+const basePath =
+  "/workspace/.sparkbox/bin:/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin:.";
 
-/**
- * Printed by the terminal's bash before every prompt: an operating system
- * command the page's terminal intercepts to learn that a command finished.
- */
-export const terminalPromptCode = 7700;
+type Boot = { client: WasmerClient; handle: WasmerSandboxHandle; shell: CommandRef };
 
 /** An interactive bash attached to a terminal. */
 export type TerminalSession = {
@@ -226,11 +225,12 @@ export class WasmerSandbox implements Sandbox {
     const handle = await client.sandboxes.create({
       packages: [bash, ...sandboxPackages.slice(1)],
       shell,
-      files,
+      // The commands Sparkbox adds (find, curl, less, …) go in at every boot:
+      // .sparkbox is never saved.
+      files: { ...files, ...guestToolFiles() },
       env: {
         HOME: "/workspace",
-        // .sparkbox/bin holds the git command, which Sparkbox answers from the page.
-        PATH: "/workspace/.sparkbox/bin:/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin:.",
+        PATH: basePath,
         TERM: "xterm-256color",
         CI: "1",
         npm_config_update_notifier: "false",
@@ -728,6 +728,12 @@ export class WasmerSandbox implements Sandbox {
             env: {
               ...this.environment,
               PS1: "\\[\\e[1;32m\\]\\w\\[\\e[0m\\] $ ",
+              // The project's own commands (tsc, vite) run by name, as in most terminals.
+              PATH: `${basePath}:/workspace/node_modules/.bin`,
+              // Node programs run here can be piped (`git log | head`).
+              NODE_OPTIONS: "--require /workspace/.sparkbox/tools/pipe-stdout.cjs",
+              // The runtime reports a terminal for every command; this marks the real one.
+              SPARKBOX_TERMINAL: "1",
               PROMPT_COMMAND: `printf '\\033]${terminalPromptCode};\\007'`,
               // HOME is the project; history there would be committed and pushed.
               HISTFILE: "/tmp/.bash_history",

@@ -91,7 +91,7 @@ Project context
 - README.md and readme.md belong to the app; do not replace them with the project brief. If PROJECT.md is missing, say so and ask the user for context; offer to write one from their answer.
 
 Environment
-- Commands available: bash, GNU coreutils (ls, cat, cp, mv, rm, mkdir, head, tail, wc, sort, …), grep, sed, rg (ripgrep), node (Node.js via Edge.js), npm, pnpm. Not available: git, curl, wget, python.
+- Commands available: bash, GNU coreutils (ls, cat, cp, mv, rm, mkdir, head, tail, wc, sort, …), grep, sed, rg (ripgrep), node (Node.js via Edge.js), npm, pnpm, git (see below), and small versions Sparkbox adds of find, xargs, diff, tree, du, curl, wget, timeout, which and tsx (runs a TypeScript file; node itself cannot strip types). These added commands can be piped. Not available: python, vi or any terminal editor (use your file tools).
 ${network}
 - There is no interactive terminal input; commands must not wait for stdin. Commands time out after two minutes; keep that default rather than raising it.
 - Keep scratch files under /workspace (for example .scratch/); /tmp does not survive a runtime restart.

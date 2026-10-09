@@ -229,6 +229,56 @@ export class EsbuildService {
     }
   }
 
+  /**
+   * Bundle a TypeScript or JavaScript file into one ES module for the
+   * sandbox's Node, which cannot strip types. Packages and Node built-ins
+   * stay imports for Node to resolve; `require`, `__dirname` and
+   * `__filename` are provided for code written for CommonJS, and
+   * `import.meta.url` names the entry file. Returns the code, or esbuild's
+   * messages as text.
+   */
+  async bundleForNode(entry: string): Promise<{ code: string } | { errors: string }> {
+    const esbuild = await loadEsbuild();
+    const options: Esbuild.BuildOptions = {
+      entryPoints: [entry],
+      bundle: true,
+      platform: "node",
+      format: "esm",
+      target: "node22",
+      packages: "external",
+      absWorkingDir: dirname(entry),
+      write: false,
+      logLevel: "silent",
+      jsx: "automatic",
+      define: { "import.meta.url": JSON.stringify(`file://${entry}`) },
+      banner: {
+        js: [
+          'import { createRequire as __sparkboxCreateRequire } from "node:module";',
+          `globalThis.require ??= __sparkboxCreateRequire(${JSON.stringify(entry)});`,
+          `globalThis.__filename ??= ${JSON.stringify(entry)};`,
+          `globalThis.__dirname ??= ${JSON.stringify(dirname(entry))};`,
+        ].join("\n"),
+      },
+    };
+    const context: Context = {
+      build: null as unknown as Esbuild.BuildContext,
+      write: false,
+      pluginBuild: null,
+    };
+    try {
+      const result = await esbuild.build({
+        ...options,
+        plugins: [this.filesystemPlugin(context, options)],
+      });
+      return { code: result.outputFiles?.[0]?.text ?? "" };
+    } catch (error) {
+      const failure = error as Partial<Esbuild.BuildFailure>;
+      if (!failure.errors?.length) throw error;
+      const messages = await esbuild.formatMessages(failure.errors, { kind: "error" });
+      return { errors: messages.join("") };
+    }
+  }
+
   private context(id: number) {
     const context = this.contexts.get(id);
     if (!context) throw new Error("unknown esbuild context");
@@ -316,6 +366,13 @@ export class EsbuildService {
           if (args.namespace !== "file" && args.namespace !== "") return undefined;
           const base = args.resolveDir || (args.importer ? dirname(args.importer) : cwd);
           if (args.path.startsWith("/")) return this.resolveFile(args.path);
+          // Bundles for Node leave packages and built-ins to Node.
+          if (
+            options.packages === "external" &&
+            args.kind !== "entry-point" &&
+            !args.path.startsWith(".")
+          )
+            return { path: args.path, external: true };
           if (
             args.path.startsWith("./") ||
             args.path.startsWith("../") ||

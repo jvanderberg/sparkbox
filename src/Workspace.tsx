@@ -376,7 +376,14 @@ export function Workspace({
         onFullScreen={() => setPreviewFull(true)}
         onExitFullScreen={() => setPreviewFull(false)}
       />
-      <TerminalPanel sandbox={sandbox} visible={view === "terminal"} />
+      <TerminalPanel
+        sandbox={sandbox}
+        visible={view === "terminal"}
+        onOpenFile={(path) => {
+          setView("files");
+          void refreshFiles().then(() => open(path));
+        }}
+      />
       <div className="workspace-files" hidden={view !== "files"}>
         {externalChange && (
           <p className="auth-pending" role="status">

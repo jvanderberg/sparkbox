@@ -323,6 +323,15 @@ button.addEventListener("click", () => {
     await page.keyboard.press("Enter");
     await terminalShows("wrote-42", 2);
   }
+  // The commands Sparkbox adds: find and xargs in a pipe, TypeScript through
+  // tsx, and a Node program (git) whose output survives a pipe here.
+  await write("tsx-check.ts", "const answer: number = 6 * 7;\nconsole.log('tsx-' + answer);\n");
+  await page.keyboard.type(
+    "find . -name term.txt | xargs wc -c; tsx tsx-check.ts; git log --oneline | tail -1\n",
+  );
+  await terminalShows("9 ./term.txt");
+  await terminalShows("tsx-42");
+  await terminalShows("Start project");
   await page.keyboard.type("exit\n");
   await terminalShows("Shell exited with code 0");
   await page.screenshot({ path: `artifacts/smoke-${label}-terminal.png` });
@@ -333,8 +342,14 @@ button.addEventListener("click", () => {
   await page.getByRole("treeitem", { name: /term\.txt/ }).waitFor({ timeout: 20_000 });
   if ((await exec("ls -a")).stdout.includes(".bash_history"))
     throw new Error("the terminal wrote its history into the project");
-  await exec("rm term.txt");
-  console.log(`${label} terminal runs commands and the explorer sees their files`);
+  // The agent's commands get the same tools.
+  const tools = await exec(
+    "printf 'a\\nb\\n' > d1.txt; printf 'a\\nc\\n' > d2.txt; diff -u d1.txt d2.txt | tail -2; tsx tsx-check.ts",
+  );
+  if (!tools.stdout.includes("-b\n+c\n") || !tools.stdout.includes("tsx-42"))
+    throw new Error(`diff or tsx failed for a command: ${JSON.stringify(tools)}`);
+  await exec("rm term.txt tsx-check.ts d1.txt d2.txt");
+  console.log(`${label} terminal runs commands, Sparkbox's tools and tsx; the explorer sees files`);
   // The preview command backgrounds a second server, the shape of a Vite app
   // with an API: stopping the preview has to take that one down too.
   await write(

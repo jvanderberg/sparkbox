@@ -9,6 +9,9 @@
  * bridge → page:  the same line on stdout
  * page → bridge:  {"id":1,"stdout":"...","stderr":"...","code":0} on stdin
  * bridge → shim:  the same line back on the socket
+ *
+ * Other page-backed commands use the same bridge with a `tool` field (the
+ * tsx command asks the page to bundle a TypeScript file).
  */
 export const gitBridgePort = 4998;
 export const gitBridgePath = ".sparkbox/git-bridge.mjs";
@@ -76,7 +79,7 @@ const server = net.createServer((socket) => {
     }
     const id = next++;
     waiting.set(id, socket);
-    out({ id, argv: request.argv ?? [], cwd: request.cwd ?? "" });
+    out({ id, tool: request.tool, argv: request.argv ?? [], cwd: request.cwd ?? "" });
   });
   socket.on("error", () => {});
 });

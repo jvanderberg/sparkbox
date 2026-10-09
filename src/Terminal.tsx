@@ -3,7 +3,8 @@ import { type ITheme, Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import { RotateCcw } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { type TerminalSession, terminalPromptCode, type WasmerSandbox } from "./sandbox/wasmer.ts";
+import { terminalPromptCode } from "./sandbox/guest-tools.ts";
+import type { TerminalSession, WasmerSandbox } from "./sandbox/wasmer.ts";
 import { useSystemTheme } from "./theme.ts";
 import "./terminal.css";
 
@@ -86,8 +87,19 @@ type Control = {
  * time the view is shown and lives as long as the project is open; switching
  * views keeps it running.
  */
-export function TerminalPanel({ sandbox, visible }: { sandbox: WasmerSandbox; visible: boolean }) {
+export function TerminalPanel({
+  sandbox,
+  visible,
+  onOpenFile,
+}: {
+  sandbox: WasmerSandbox;
+  visible: boolean;
+  /** The edit command (and its vi, nano and code names) asks for a file. */
+  onOpenFile: (path: string) => void;
+}) {
   const host = useRef<HTMLDivElement>(null);
+  const openFile = useRef(onOpenFile);
+  openFile.current = onOpenFile;
   const control = useRef<Control | null>(null);
   const terminalRef = useRef<Terminal | null>(null);
   const [started, setStarted] = useState(false);
@@ -144,8 +156,9 @@ export function TerminalPanel({ sandbox, visible }: { sandbox: WasmerSandbox; vi
         }
       });
     };
-    terminal.parser.registerOscHandler(terminalPromptCode, () => {
-      sync();
+    terminal.parser.registerOscHandler(terminalPromptCode, (data) => {
+      if (data.startsWith("open;")) openFile.current(data.slice(5));
+      else sync();
       return true;
     });
 
