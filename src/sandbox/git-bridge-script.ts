@@ -19,26 +19,39 @@ export const gitWrapperScript = `#!/bin/bash
 exec node /workspace/${gitShimPath} "$@"
 `;
 
+// The bridge may still be starting when the first command runs (a fresh
+// session, or its restart after a runtime rebuild), so a refused connection
+// is retried for a while before git reports itself unavailable.
 export const gitShimScript = `import net from "node:net";
-const socket = net.connect(${gitBridgePort}, "127.0.0.1");
+const deadline = Date.now() + 15000;
 let buffer = "";
-socket.on("connect", () => {
-  socket.write(JSON.stringify({ argv: process.argv.slice(2), cwd: process.cwd() }) + "\\n");
-});
-socket.on("data", (chunk) => {
-  buffer += chunk.toString("utf8");
-  const newline = buffer.indexOf("\\n");
-  if (newline < 0) return;
-  const reply = JSON.parse(buffer.slice(0, newline));
-  if (reply.stdout) process.stdout.write(reply.stdout);
-  if (reply.stderr) process.stderr.write(reply.stderr);
-  socket.end();
-  process.exitCode = reply.code ?? 1;
-});
-socket.on("error", () => {
-  process.stderr.write("fatal: git is not available right now (the Sparkbox git bridge is not running). Try again in a moment.\\n");
-  process.exitCode = 128;
-});
+function attempt() {
+  let connected = false;
+  const socket = net.connect(${gitBridgePort}, "127.0.0.1");
+  socket.on("connect", () => {
+    connected = true;
+    socket.write(JSON.stringify({ argv: process.argv.slice(2), cwd: process.cwd() }) + "\\n");
+  });
+  socket.on("data", (chunk) => {
+    buffer += chunk.toString("utf8");
+    const newline = buffer.indexOf("\\n");
+    if (newline < 0) return;
+    const reply = JSON.parse(buffer.slice(0, newline));
+    if (reply.stdout) process.stdout.write(reply.stdout);
+    if (reply.stderr) process.stderr.write(reply.stderr);
+    socket.end();
+    process.exitCode = reply.code ?? 1;
+  });
+  socket.on("error", () => {
+    if (!connected && Date.now() < deadline) {
+      setTimeout(attempt, 250);
+      return;
+    }
+    process.stderr.write("fatal: git is not available right now (the Sparkbox git bridge is not running). Try again in a moment.\\n");
+    process.exitCode = 128;
+  });
+}
+attempt();
 `;
 
 export const gitBridgeScript = `import net from "node:net";
