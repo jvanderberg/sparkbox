@@ -49,11 +49,11 @@ export function InviteGate({ onSettings }: { onSettings: () => void }) {
         <p className="form-error invite-error" role="alert" hidden={!error}>
           {error}
         </p>
-        <p className="landing-alternative">
-          {expired
-            ? "Your invite has expired. Enter the code again to keep going."
-            : "Sparkbox is invite-only for now. The code turns on the free agent and the sandbox's internet access, which installing packages and running the preview need. Ask the person who shared this link for one."}
-        </p>
+        {expired && (
+          <p className="landing-alternative">
+            Your invite has expired. Enter the code again to keep going.
+          </p>
+        )}
       </section>
     </main>
   );
