@@ -143,6 +143,7 @@ async function handleApi(request: IncomingMessage, response: ServerResponse, url
       githubClientId: githubClientSecret ? githubClientId : "",
       gitProxyUrl: publicOrigin ? `${publicOrigin}/api/git` : "/api/git",
       contextLimit,
+      invites: Boolean(secret && inviteCodes.length),
     });
   }
   if (url.pathname.startsWith("/api/git/")) {

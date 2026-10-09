@@ -14,6 +14,8 @@ export type HostConfig = {
   gitProxyUrl: string;
   /** Prompt tokens past which the runner folds the oldest half of a conversation; 0 is off. */
   contextLimit: number;
+  /** The host hands out invites, and the relay, fetch proxy and free agent need one. */
+  invites: boolean;
 };
 
 let loaded: Promise<HostConfig> | null = null;
@@ -37,6 +39,7 @@ export function hostConfig(): Promise<HostConfig> {
           typeof data.contextLimit === "number" && data.contextLimit > 0
             ? Math.floor(data.contextLimit)
             : 0,
+        invites: data.invites === true,
       };
     })
     .catch(() => ({
@@ -47,6 +50,7 @@ export function hostConfig(): Promise<HostConfig> {
       githubClientId: "",
       gitProxyUrl: "",
       contextLimit: 0,
+      invites: false,
     }));
   return loaded;
 }
@@ -61,8 +65,19 @@ export async function relayUrl(token: string): Promise<string> {
     headers: { authorization: `Bearer ${token}` },
   });
   const data = (await response.json().catch(() => ({}))) as { url?: string; error?: string };
-  if (!response.ok || !data.url) throw new Error(data.error ?? "The relay refused this invite.");
+  if (!response.ok || !data.url)
+    throw new RelayError(data.error ?? "The relay refused this invite.", response.status);
   return data.url;
+}
+
+export class RelayError extends Error {
+  constructor(
+    message: string,
+    /** 401 means the host no longer accepts the invite. */
+    readonly status: number,
+  ) {
+    super(message);
+  }
 }
 
 /** Exchange an invite code for a session token. */

@@ -306,6 +306,9 @@
 .landing-body p {
   color: var(--app-muted);
 }
+.landing-body .form-error {
+  color: var(--danger, #b42318);
+}
 .landing-body .project-create .button {
   min-height: 44px;
   padding: 0 18px;
