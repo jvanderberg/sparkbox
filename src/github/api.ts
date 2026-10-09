@@ -119,8 +119,10 @@ export class GitHubClient {
   }
 
   /**
-   * A new public repository with an initial commit, so the first push has a
-   * parent. A taken name gets a numeric suffix rather than a question.
+   * A new, empty public repository: the first push brings the project's own
+   * history. (A README commit from GitHub would share no history with it,
+   * and the page's git cannot merge unrelated histories.) A taken name gets a
+   * numeric suffix rather than a question.
    */
   async createRepository(name: string, description: string): Promise<Repository> {
     for (let attempt = 0; attempt < 20; attempt++) {
@@ -135,7 +137,7 @@ export class GitHubClient {
           name: candidate,
           description,
           private: false,
-          auto_init: true,
+          auto_init: false,
           has_wiki: false,
           has_projects: false,
         });

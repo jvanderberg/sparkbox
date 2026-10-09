@@ -37,6 +37,8 @@ function parse(argv: string[]) {
   const flags = new Set<string>();
   const values = new Map<string, string>();
   const positional: string[] = [];
+  /** Index into positional where `--` was given: everything after it is a path. */
+  let dashes: number | null = null;
   let afterDashes = false;
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i] ?? "";
@@ -46,6 +48,7 @@ function parse(argv: string[]) {
     }
     if (arg === "--") {
       afterDashes = true;
+      dashes = positional.length;
       continue;
     }
     if (arg.startsWith("--")) {
@@ -70,7 +73,7 @@ function parse(argv: string[]) {
       }
     }
   }
-  return { flags, values, positional };
+  return { flags, values, positional, dashes };
 }
 
 function shortSha(sha: string) {
@@ -106,7 +109,7 @@ export async function runGitCommand(repo: Repository, argv: string[]): Promise<C
       `usage: git <command> [<args>]\n\nSupported here: ${supported.join(", ")}.\nThe repository is kept by Sparkbox; push and pull go to the GitHub repository the project is backed up to.\n`,
     );
   if (command === "--version") return ok("git version 2.0.0 (Sparkbox, isomorphic-git)\n");
-  const { flags, values, positional } = parse(rest);
+  const { flags, values, positional, dashes } = parse(rest);
   try {
     if (!repo.initialized() && command !== "init") await repo.ensure();
     switch (command) {
@@ -209,8 +212,16 @@ export async function runGitCommand(repo: Repository, argv: string[]): Promise<C
       }
       case "diff": {
         const staged = flags.has("staged") || flags.has("cached");
-        const refs = positional.filter((p) => !p.includes("/") && !p.includes("."));
-        const paths = positional.filter((p) => !refs.includes(p));
+        // Like git: arguments that name commits are refs (a..b names both), the rest are paths.
+        const refs: string[] = [];
+        const paths = dashes === null ? [] : positional.slice(dashes);
+        for (const arg of dashes === null ? positional : positional.slice(0, dashes)) {
+          const range = /^(.*?)\.\.\.?(.*)$/.exec(arg);
+          const ends = range ? [range[1] || "HEAD", range[2] || "HEAD"] : [arg];
+          const oids = await Promise.all(ends.map((end) => repo.resolve(end)));
+          if (oids.every((oid): oid is string => Boolean(oid))) refs.push(...oids);
+          else paths.push(arg);
+        }
         let changes: Changes;
         if (staged) changes = await repo.diff("HEAD", "STAGE", paths.length ? paths : undefined);
         else if (refs.length >= 2)
@@ -232,17 +243,16 @@ export async function runGitCommand(repo: Repository, argv: string[]): Promise<C
       }
       case "show": {
         const ref = positional[0] ?? "HEAD";
-        const entry = await repo.show(ref);
-        if (!entry) return fatal(`bad revision '${ref}'`);
-        const parent = `${ref}~1`;
-        let diff = "";
-        try {
-          diff = renderDiff(await repo.diff(parent, ref));
-        } catch {
-          diff = renderDiff(
-            await repo.diff("4b825dc642cb6eb9a060e54bf8d69288fbee4904", ref),
-          ).replace(/4b825dc6\w*/g, "root");
-        }
+        const oid = await repo.resolve(ref);
+        const entry = oid && (await repo.show(oid));
+        if (!oid || !entry) return fatal(`bad revision '${ref}'`);
+        const parent = await repo.parentOf(oid);
+        const diff = parent
+          ? renderDiff(await repo.diff(parent, oid))
+          : renderDiff(await repo.diff("4b825dc642cb6eb9a060e54bf8d69288fbee4904", oid)).replace(
+              /4b825dc6\w*/g,
+              "root",
+            );
         return ok(
           `commit ${entry.sha}\nAuthor: ${entry.author}\nDate:   ${entry.date.toISOString()}\n\n    ${entry.message.trim()}\n\n${diff}`,
         );

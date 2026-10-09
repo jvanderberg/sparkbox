@@ -85,6 +85,7 @@ describe("GitHubClient", () => {
     let attempts = 0;
     const client = new GitHubClient("tok", async (_input, init) => {
       const body = JSON.parse(String(init?.body));
+      expect(body.auto_init).toBe(false);
       attempts++;
       if (attempts === 1)
         return new Response(

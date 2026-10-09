@@ -125,6 +125,25 @@ export class Repository {
     }
   }
 
+  /** The commit a branch, tag, remote branch or (abbreviated) sha names; null when none. */
+  async resolve(ref: string): Promise<string | null> {
+    try {
+      return await git.resolveRef({ ...this.ctx, ref });
+    } catch {}
+    if (!/^[0-9a-f]{4,40}$/.test(ref)) return null;
+    try {
+      return await git.expandOid({ ...this.ctx, oid: ref });
+    } catch {
+      return null;
+    }
+  }
+
+  /** The first parent of a commit; null for a root commit. */
+  async parentOf(oid: string): Promise<string | null> {
+    const { commit } = await git.readCommit({ ...this.ctx, oid });
+    return commit.parent[0] ?? null;
+  }
+
   /** Every file's state against HEAD and the index. */
   async matrix(filter?: (path: string) => boolean) {
     return git.statusMatrix({ ...this.ctx, filter });
@@ -286,6 +305,24 @@ export class Repository {
       force: options.force,
     });
     if (!result.ok || result.error) throw new GitError(result.error ?? "The push was refused.");
+  }
+
+  /**
+   * True when the fetched remote branch is only the README commit GitHub
+   * makes for a repository created with one. Sparkbox made such repositories
+   * once; their projects never reached them, and replacing it loses nothing.
+   */
+  async remoteIsGitHubStarter(): Promise<boolean> {
+    const branch = await this.currentBranch();
+    try {
+      const oid = await git.resolveRef({ ...this.ctx, ref: `refs/remotes/origin/${branch}` });
+      const { commit } = await git.readCommit({ ...this.ctx, oid });
+      if (commit.parent.length || commit.message.trim() !== "Initial commit") return false;
+      const { tree } = await git.readTree({ ...this.ctx, oid: commit.tree });
+      return tree.length === 1 && tree[0]?.path === "README.md";
+    } catch {
+      return false;
+    }
   }
 
   async pull() {

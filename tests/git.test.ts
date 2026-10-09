@@ -1,3 +1,4 @@
+import * as git from "isomorphic-git";
 import { beforeEach, describe, expect, it } from "vitest";
 import { runGitCommand } from "../src/git/cli.ts";
 import { GitStore } from "../src/git/fs.ts";
@@ -103,6 +104,38 @@ describe("Repository", () => {
     expect(await repo.remote()).toBe("https://github.com/ada/demo.git");
     await expect(repo.push()).rejects.toThrow(/Sparkbox host/);
   });
+
+  it("recognizes GitHub's README-only starter commit on the remote", async () => {
+    await repo.ensure();
+    await repo.commitAll("Start");
+    expect(await repo.remoteIsGitHubStarter()).toBe(false);
+    const ctx = { fs: repo.fs, dir: "/work", gitdir: "/git" };
+    const remote = async (message: string, files: string[]) => {
+      const tree = await git.writeTree({
+        ...ctx,
+        tree: await Promise.all(
+          files.map(async (path) => ({
+            mode: "100644",
+            path,
+            type: "blob" as const,
+            oid: await git.writeBlob({ ...ctx, blob: new TextEncoder().encode("# demo\n") }),
+          })),
+        ),
+      });
+      const who = { name: "GitHub", email: "noreply@github.com", timestamp: 0, timezoneOffset: 0 };
+      const oid = await git.writeCommit({
+        ...ctx,
+        commit: { message: `${message}\n`, tree, parent: [], author: who, committer: who },
+      });
+      await git.writeRef({ ...ctx, ref: "refs/remotes/origin/main", value: oid, force: true });
+    };
+    await remote("Initial commit", ["README.md"]);
+    expect(await repo.remoteIsGitHubStarter()).toBe(true);
+    await remote("Initial commit", ["README.md", "index.html"]);
+    expect(await repo.remoteIsGitHubStarter()).toBe(false);
+    await remote("Someone's own start", ["README.md"]);
+    expect(await repo.remoteIsGitHubStarter()).toBe(false);
+  });
 });
 
 describe("git command", () => {
@@ -156,5 +189,36 @@ describe("git command", () => {
     expect((await run("status --short")).stdout).toBe(" M a.txt\nD  b.txt\n");
     await run("restore a.txt");
     expect(await sandbox.readText("a.txt")).toBe("a\n");
+  });
+
+  it("diffs named commits, remote branches and ranges, and shows one commit's change", async () => {
+    const { sandbox, repo } = setup({ "a.txt": "a\n", "b.txt": "b\n" });
+    const run = (line: string) => runGitCommand(repo, line.split(" ").filter(Boolean));
+    await run("add -A");
+    await run("commit -m Start");
+    await run("branch topic");
+    await sandbox.writeFile("a.txt", "A\n");
+    await run("commit -am Edit");
+    await git.writeRef({
+      fs: repo.fs,
+      gitdir: "/git",
+      ref: "refs/remotes/origin/main",
+      value: (await repo.resolve("topic")) ?? "",
+    });
+    const start = (await repo.resolve("topic"))?.slice(0, 7) ?? "";
+    for (const line of [
+      "diff topic main --name-only",
+      "diff origin/main HEAD --name-only",
+      "diff origin/main..HEAD --name-only",
+      `diff ${start} HEAD --name-only`,
+    ])
+      expect((await run(line)).stdout, line).toBe("a.txt\n");
+    expect((await run("diff origin/main HEAD --name-only -- b.txt")).stdout).toBe("");
+    await sandbox.writeFile("b.txt", "B\n");
+    expect((await run("diff --name-only b.txt")).stdout).toBe("b.txt\n");
+    const show = (await run("show HEAD")).stdout;
+    expect(show).toContain("+A");
+    expect(show).not.toContain("b.txt");
+    expect((await run("show nope")).stderr).toContain("bad revision");
   });
 });

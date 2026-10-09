@@ -150,7 +150,8 @@ export function useGitHubProject(options: {
       `${project.name} — built with Sparkbox`,
     );
     await git.setRemote(cloneUrl(repo));
-    const created: GitHubLink = { ...repo, auto: true };
+    // The empty repository's default branch becomes whichever branch is pushed first.
+    const created: GitHubLink = { ...repo, branch: await git.currentBranch(), auto: true };
     setLink(created);
     return created;
   }, [git, project.name, setLink]);
@@ -178,9 +179,13 @@ export function useGitHubProject(options: {
       forgetIfExpired(error);
       if (!/Pull first/.test(describeGitError(error))) throw new Error(describeGitError(error));
       try {
-        await git.pull();
-        onChanged();
-        await git.push();
+        await git.fetch();
+        if (await git.remoteIsGitHubStarter()) await git.push({ force: true });
+        else {
+          await git.pull();
+          onChanged();
+          await git.push();
+        }
       } catch (again) {
         forgetIfExpired(again);
         throw new Error(describeGitError(again));
@@ -217,6 +222,11 @@ export function useGitHubProject(options: {
         const { kind, added } = publishFiles(await sandbox.snapshot());
         let siteUrl = target.siteUrl;
         if (!siteUrl || target.kind !== kind) {
+          // Pages needs the branch on GitHub, and a new repository is empty.
+          if (!target.pushedAt) {
+            await commitAll("Update from Sparkbox");
+            await push();
+          }
           siteUrl = await enableSite(client, target, kind);
           setLink({ ...(linkRef.current ?? target), siteUrl, kind });
         }
