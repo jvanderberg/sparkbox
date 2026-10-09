@@ -13,7 +13,13 @@ import {
   trimmedResultLimit,
 } from "../compaction.ts";
 import { pageTools, runPageTool, runShell, textEditor } from "../tools.ts";
-import { describeFailure, type Prompt, type ProviderSession, type TurnContext } from "./types.ts";
+import {
+  describeFailure,
+  interruptedToolOutput,
+  type Prompt,
+  type ProviderSession,
+  type TurnContext,
+} from "./types.ts";
 
 const tools: Anthropic.Messages.ToolUnion[] = [
   { type: "bash_20250124", name: "bash" },
@@ -151,7 +157,24 @@ export class AnthropicSession implements ProviderSession {
     return { turns: split.turns };
   }
 
+  /** Results for the tool calls a reload or stop left unanswered at the end of the thread. */
+  private unanswered(): Anthropic.Messages.ToolResultBlockParam[] {
+    const last = this.messages.at(-1);
+    if (last?.role !== "assistant" || typeof last.content === "string") return [];
+    return last.content
+      .filter((block) => block.type === "tool_use")
+      .map((block) => ({
+        type: "tool_result",
+        tool_use_id: block.id,
+        content: interruptedToolOutput,
+        is_error: true,
+      }));
+  }
+
   async run(prompt: Prompt, context: TurnContext) {
+    // Its own message, so compaction still sees the prompt below as a turn.
+    const interrupted = this.unanswered();
+    if (interrupted.length) this.messages.push({ role: "user", content: interrupted });
     const content: Anthropic.Messages.ContentBlockParam[] = [
       ...(prompt.images ?? []).map(
         (image): Anthropic.Messages.ImageBlockParam => ({
@@ -162,6 +185,7 @@ export class AnthropicSession implements ProviderSession {
       { type: "text", text: prompt.text || "(see attached images)" },
     ];
     this.messages.push({ role: "user", content });
+    context.checkpoint?.();
     for (let step = 0; step < 200; step++) {
       if (context.signal.aborted) return;
       const textId = crypto.randomUUID();
@@ -189,6 +213,7 @@ export class AnthropicSession implements ProviderSession {
         throw describeFailure(error);
       }
       this.messages.push({ role: "assistant", content: message.content });
+      context.checkpoint?.();
       if (message.stop_reason === "refusal") {
         context.sink.status("The model declined this request.");
         return;
@@ -269,6 +294,7 @@ export class AnthropicSession implements ProviderSession {
         });
       }
       this.messages.push({ role: "user", content: results });
+      context.checkpoint?.();
     }
   }
 }

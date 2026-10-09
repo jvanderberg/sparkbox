@@ -214,8 +214,12 @@ export class AgentRunner {
     });
     this.emit(this.stateEvent());
     let outcome: "success" | "failed" | "stopped" = "success";
+    let session: ProviderSession | undefined;
     try {
-      const session = this.session(provider);
+      // The saved thread must be in place before this turn adds to it.
+      await this.loaded;
+      session = this.session(provider);
+      const active = session;
       await this.compactIfNeeded(session, controller.signal);
       const files = await this.options.sandbox.listFiles();
       const brief = files.includes("PROJECT.md")
@@ -243,6 +247,7 @@ export class AgentRunner {
           fetchProxy: this.options.fetchProxy?.(),
           secrets,
           contextLimit: this.options.contextLimit?.() ?? 0,
+          checkpoint: () => this.persistSession(active),
           sink: {
             text: (id, delta) => {
               if (!controller.signal.aborted) this.emit({ type: "text", id, text: delta });
@@ -257,7 +262,6 @@ export class AgentRunner {
       );
       if (controller.signal.aborted) outcome = "stopped";
       else await this.compactIfNeeded(session, controller.signal);
-      void this.persistSession(provider, session);
     } catch (error) {
       if (controller.signal.aborted) outcome = "stopped";
       else {
@@ -282,6 +286,8 @@ export class AgentRunner {
         });
       }
     } finally {
+      // A failed or stopped turn still keeps its place in the thread.
+      if (session) this.persistSession(session);
       // Files written during the turn must outlive a reload or a runtime crash.
       void this.options.sandbox.flush?.().catch(() => {});
       this.current = null;
@@ -317,7 +323,8 @@ export class AgentRunner {
   }
 
   private scheduleSave() {
-    if (this.saveTimer) clearTimeout(this.saveTimer);
+    // Throttled, not debounced: a long stream of deltas must still reach storage.
+    if (this.saveTimer) return;
     this.saveTimer = setTimeout(() => {
       this.saveTimer = null;
       void kv.set("transcripts", this.options.workspace, this.events.slice(-400));
@@ -365,12 +372,15 @@ export class AgentRunner {
     }
   }
 
-  private async persistSession(provider: ProviderId, session: ProviderSession) {
-    try {
-      await kv.set("sessions", `${this.options.workspace}:${provider}`, session.export());
-    } catch {
-      // Conversation context is a convenience; the transcript is still shown.
-    }
+  /**
+   * Save the model's thread as it grows, not only when a turn ends, so a
+   * reload mid-turn does not leave the transcript showing a conversation the
+   * model has forgotten.
+   */
+  private persistSession(session: ProviderSession) {
+    // A reset during the turn dropped this session; do not write it back.
+    if (![...this.sessions.values()].includes(session)) return;
+    void kv.set("sessions", `${this.options.workspace}:${session.provider}`, session.export());
   }
 
   private async restore() {

@@ -79,7 +79,16 @@ export type TurnContext = {
   secrets?: Record<string, string>;
   /** Prompt tokens past which a running turn trims older images and tool results; 0 is off. */
   contextLimit?: number;
+  /** The history changed; the runner saves it so a reload mid-turn keeps the thread. */
+  checkpoint?: () => void;
 };
+
+/**
+ * The result recorded for a tool call that never finished, because the page
+ * was reloaded or the turn was stopped. Providers reject a call with no result.
+ */
+export const interruptedToolOutput =
+  "Interrupted: the turn ended before this tool finished, so its result is unknown.";
 
 /** One provider-specific conversation. History stays in memory per session. */
 export interface ProviderSession {
