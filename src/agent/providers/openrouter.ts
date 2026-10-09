@@ -6,10 +6,16 @@ import type {
 import {
   estimateTokens,
   excerpt,
+  imagePlaceholder,
+  keepImages,
+  pruneNotice,
   splitOldestTurns,
   summaryAcknowledgement,
   summaryInstructions,
   summaryMessage,
+  summaryOutputCap,
+  summaryWords,
+  trimmedResultLimit,
 } from "../compaction.ts";
 import {
   genericTools,
@@ -53,7 +59,10 @@ export class OpenRouterSession implements ProviderSession {
       baseURL: options.baseURL ?? "https://openrouter.ai/api/v1",
       dangerouslyAllowBrowser: true,
       maxRetries: 2,
-      defaultHeaders: { "HTTP-Referer": location.origin, "X-Title": "Sparkbox" },
+      defaultHeaders: {
+        "HTTP-Referer": typeof location === "undefined" ? "http://localhost" : location.origin,
+        "X-Title": "Sparkbox",
+      },
     });
   }
 
@@ -82,28 +91,62 @@ export class OpenRouterSession implements ProviderSession {
     return estimateTokens(text, images);
   }
 
+  prune() {
+    const pruned = { images: 0, results: 0 };
+    // Images: keep the newest few, counted from the end.
+    let seen = 0;
+    for (let i = this.messages.length - 1; i >= 0; i--) {
+      const message = this.messages[i];
+      if (!message || typeof message.content === "string" || !Array.isArray(message.content))
+        continue;
+      if (message.role !== "user" && message.role !== "tool") continue;
+      const parts = message.content as { type: string; text?: string }[];
+      for (let j = parts.length - 1; j >= 0; j--) {
+        if (parts[j]?.type !== "image_url") continue;
+        if (seen++ < keepImages) continue;
+        parts[j] = { type: "text", text: imagePlaceholder };
+        pruned.images++;
+      }
+    }
+    // Tool results before the current turn shrink to an excerpt.
+    const lastUser = this.messages.findLastIndex(isUserPrompt);
+    for (let i = 0; i < lastUser; i++) {
+      const message = this.messages[i];
+      if (message?.role !== "tool" || typeof message.content !== "string") continue;
+      if (message.content.length <= trimmedResultLimit) continue;
+      message.content = excerpt(message.content, trimmedResultLimit);
+      pruned.results++;
+    }
+    if (pruned.images || pruned.results) this.lastPromptTokens = null;
+    return pruned;
+  }
+
+  turns() {
+    return this.messages.filter(isUserPrompt).length;
+  }
+
   async compact(fraction: number, signal?: AbortSignal) {
-    const split = splitOldestTurns(
-      this.messages,
-      (message) => message.role === "user" && !isSummary(message),
-      fraction,
-    );
+    const split = splitOldestTurns(this.messages, isUserPrompt, fraction);
     if (!split) return null;
     const transcript = split.folded.map(renderForSummary).filter(Boolean).join("\n\n");
+    const words = summaryWords(estimateTokens(JSON.stringify(split.folded), 0));
     let summary: string;
     try {
       const completion = await this.client.chat.completions.create(
         {
           model: this.model,
           messages: [
-            { role: "system", content: summaryInstructions },
+            { role: "system", content: summaryInstructions(words) },
             { role: "user", content: transcript },
           ],
-          max_tokens: 1500,
+          max_tokens: summaryOutputCap,
         },
         { signal },
       );
       summary = completion.choices[0]?.message.content ?? "";
+      if (!summary.trim() && completion.choices[0]?.finish_reason === "length")
+        throw new Error("The model ran out of output tokens before writing the summary.");
+      // A cut-off summary is still a summary; the prompt's word count is the real limit.
     } catch (error) {
       throw describeFailure(error);
     }
@@ -115,6 +158,13 @@ export class OpenRouterSession implements ProviderSession {
     ];
     this.lastPromptTokens = null;
     return { turns: split.turns };
+  }
+
+  /** Mid-turn: a long tool loop can outgrow the limit before the turn ends. */
+  private trimIfOver(context: TurnContext) {
+    if (!context.contextLimit || (this.lastPromptTokens ?? 0) <= context.contextLimit) return;
+    const pruned = this.prune();
+    if (pruned.images || pruned.results) context.sink.status(pruneNotice(pruned));
   }
 
   /** Tool messages for the calls a reload or stop left unanswered. */
@@ -163,6 +213,7 @@ export class OpenRouterSession implements ProviderSession {
         stream.on("content", (delta) => context.sink.text(textId, delta));
         const completion = await stream.finalChatCompletion();
         if (completion.usage?.prompt_tokens) this.lastPromptTokens = completion.usage.prompt_tokens;
+        this.trimIfOver(context);
         const choice = completion.choices[0];
         if (!choice) throw new Error("The provider returned no choices.");
         assistant = choice.message;
@@ -259,8 +310,21 @@ function isSummary(message: ChatCompletionMessageParam) {
   );
 }
 
+/** A screenshot handed to the model as a user message, which is part of the agent's turn. */
+function isScreenshotFollowUp(message: ChatCompletionMessageParam) {
+  if (message.role !== "user" || typeof message.content === "string") return false;
+  const first = message.content?.[0];
+  return first?.type === "text" && first.text.startsWith("Screenshot from the preview tool");
+}
+
+/** A real prompt from the user: where a turn starts. */
+function isUserPrompt(message: ChatCompletionMessageParam) {
+  return message.role === "user" && !isSummary(message) && !isScreenshotFollowUp(message);
+}
+
 /** One message as text for the summarizer: images and long outputs trimmed. */
 function renderForSummary(message: ChatCompletionMessageParam): string {
+  if (isScreenshotFollowUp(message)) return "Tool result: [screenshot]";
   if (message.role === "user") {
     const text =
       typeof message.content === "string"

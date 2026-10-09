@@ -13,6 +13,8 @@ function fakeSession(behavior: "ok" | "hang" | "fail"): ProviderSession {
     export: () => [],
     import() {},
     promptTokens: () => 0,
+    prune: () => ({ images: 0, results: 0 }),
+    turns: () => 0,
     compact: async () => null,
     async run(prompt, context: TurnContext) {
       if (behavior === "fail") throw Object.assign(new Error("Unauthorized"), { status: 401 });

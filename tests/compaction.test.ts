@@ -3,10 +3,14 @@ import {
   compactionNotice,
   estimateTokens,
   excerpt,
+  imagePlaceholder,
   imageTokens,
   splitOldestTurns,
+  summaryInstructions,
   summaryMessage,
+  summaryWords,
 } from "../src/agent/compaction.ts";
+import { OpenRouterSession } from "../src/agent/providers/openrouter.ts";
 import type { Prompt, ProviderSession, TurnContext } from "../src/agent/providers/types.ts";
 import { AgentRunner } from "../src/agent/runner.ts";
 import type { AgentEvent } from "../src/agents/protocol.ts";
@@ -61,11 +65,54 @@ describe("helpers", () => {
     expect(compactionNotice({ turns: 1, promptTokens: 90000 }, 80000)).toContain(
       "oldest 1 turn into",
     );
+    expect(summaryWords(1000)).toBe(300);
+    expect(summaryWords(40_000)).toBe(1000);
+    expect(summaryWords(1_000_000)).toBe(1500);
+    expect(summaryInstructions(450)).toContain("under 450 words");
+  });
+});
+
+describe("pruning", () => {
+  it("keeps the newest two images and shortens tool results before the current turn", () => {
+    const session = new OpenRouterSession("key", "model");
+    const image = { type: "image_url", image_url: { url: "data:image/png;base64,AAAA" } };
+    const long = "x".repeat(5000);
+    session.import([
+      { role: "user", content: [{ type: "text", text: "first" }, image] },
+      { role: "assistant", content: "", tool_calls: [] },
+      { role: "tool", tool_call_id: "1", content: long },
+      { role: "user", content: [{ type: "text", text: "shot" }, image, image] },
+      { role: "tool", tool_call_id: "2", content: long },
+      { role: "user", content: [{ type: "text", text: "latest" }, image] },
+      { role: "tool", tool_call_id: "3", content: long },
+    ]);
+    expect(session.prune()).toEqual({ images: 2, results: 2 });
+    const messages = session.export() as { role: string; content: unknown }[];
+    const content = (index: number) => {
+      const message = messages[index];
+      if (!message) throw new Error(`no message ${index}`);
+      return message.content;
+    };
+    const types = (index: number) =>
+      (content(index) as { type: string; text?: string }[]).map((p) =>
+        p.type === "text" && p.text === imagePlaceholder ? "removed" : p.type,
+      );
+    expect(types(0)).toEqual(["text", "removed"]);
+    expect(types(3)).toEqual(["text", "removed", "image_url"]);
+    expect(types(5)).toEqual(["text", "image_url"]);
+    expect((content(2) as string).length).toBeLessThan(2000);
+    expect((content(6) as string).length).toBe(5000);
+    // A second pass has nothing left to do.
+    expect(session.prune()).toEqual({ images: 0, results: 0 });
   });
 });
 
 /** A session that reports a chosen prompt size and records compaction calls. */
-function sizedSession(tokens: { current: number }, compactions: number[]): ProviderSession {
+function sizedSession(
+  tokens: { current: number },
+  compactions: number[],
+  pruneSaves = 0,
+): ProviderSession {
   return {
     provider: "anthropic",
     model: "fake",
@@ -76,6 +123,12 @@ function sizedSession(tokens: { current: number }, compactions: number[]): Provi
     export: () => [],
     import() {},
     promptTokens: () => tokens.current,
+    turns: () => 5,
+    prune() {
+      if (!pruneSaves) return { images: 0, results: 0 };
+      tokens.current -= pruneSaves;
+      return { images: 1, results: 2 };
+    },
     async compact(fraction) {
       compactions.push(fraction);
       tokens.current = Math.floor(tokens.current / 2);
@@ -114,7 +167,7 @@ describe("runner compaction", () => {
     const events = collect(runner);
     runner.send({ type: "prompt", provider: "anthropic", text: "go", id: crypto.randomUUID() });
     await waitFor(events, "done");
-    // 3000 -> 1500 before the turn, 1500 -> 750 after it; then it is under the limit.
+    // 3000 -> 1500 -> 750 in two rounds before the turn; nothing left to do after it.
     expect(compactions).toEqual([0.5, 0.5]);
     const notices = events.filter(
       (event) => event.type === "status" && /Compacted/.test(event.text),
@@ -122,9 +175,47 @@ describe("runner compaction", () => {
     expect(notices).toHaveLength(2);
     expect(
       events.filter((event) => event.type === "status" && /^Compacting/.test(event.text)),
-    ).toHaveLength(2);
+    ).toHaveLength(1);
     expect(notices[0]?.text).toContain("3,000 tokens");
     expect(notices[0]?.text).toContain("1,000-token limit");
+  });
+  it("trims first, and folds repeatedly until under the limit", async () => {
+    const trimmed = { current: 1200 };
+    const trimmedCompactions: number[] = [];
+    const runnerA = new AgentRunner({
+      workspace: "compaction-trim",
+      sandbox: new MemorySandbox(),
+      networkEnabled: () => false,
+      previewPort: 8080,
+      contextLimit: () => 1000,
+      createSession: () => sizedSession(trimmed, trimmedCompactions, 500),
+    });
+    const eventsA = collect(runnerA);
+    runnerA.send({ type: "prompt", provider: "anthropic", text: "go", id: crypto.randomUUID() });
+    await waitFor(eventsA, "done");
+    expect(trimmedCompactions).toEqual([]);
+    expect(
+      eventsA.some(
+        (e) =>
+          e.type === "status" &&
+          /^Trimmed 1 older screenshot and 2 older tool results/.test(e.text),
+      ),
+    ).toBe(true);
+    const big = { current: 9000 };
+    const bigCompactions: number[] = [];
+    const runnerB = new AgentRunner({
+      workspace: "compaction-rounds",
+      sandbox: new MemorySandbox(),
+      networkEnabled: () => false,
+      previewPort: 8080,
+      contextLimit: () => 1000,
+      createSession: () => sizedSession(big, bigCompactions),
+    });
+    const eventsB = collect(runnerB);
+    runnerB.send({ type: "prompt", provider: "anthropic", text: "go", id: crypto.randomUUID() });
+    await waitFor(eventsB, "done");
+    // 9000 -> 4500 -> 2250 -> 1125 (three rounds before), then 562 after.
+    expect(bigCompactions).toEqual([0.5, 0.5, 0.5, 0.5]);
   });
   it("leaves the conversation alone when the deployment sets no limit", async () => {
     const compactions: number[] = [];

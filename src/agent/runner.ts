@@ -4,7 +4,7 @@ import type { AgentEvent, QueuedPrompt } from "../agents/protocol.ts";
 import { agentQueueLimit } from "../agents/protocol.ts";
 import { kv } from "../sandbox/storage.ts";
 import type { Sandbox } from "../sandbox/types.ts";
-import { compactionNotice } from "./compaction.ts";
+import { compactionNotice, pruneNotice } from "./compaction.ts";
 import type { GitHubController, GitHubState } from "./github-controller.ts";
 import type { PreviewController } from "./preview-controller.ts";
 import { AnthropicSession } from "./providers/anthropic.ts";
@@ -246,6 +246,7 @@ export class AgentRunner {
           github: this.options.github,
           fetchProxy: this.options.fetchProxy?.(),
           secrets,
+          contextLimit: this.options.contextLimit?.() ?? 0,
           checkpoint: () => this.persistSession(active),
           sink: {
             text: (id, delta) => {
@@ -342,21 +343,27 @@ export class AgentRunner {
     if (!limit) return;
     const promptTokens = session.promptTokens();
     if (promptTokens <= limit) return;
-    this.emit({
-      type: "status",
-      id: crypto.randomUUID(),
-      text: `Compacting the conversation (about ${promptTokens.toLocaleString()} tokens)…`,
-    });
+    const status = (text: string) => this.emit({ type: "status", id: crypto.randomUUID(), text });
+    // Cheapest first: older screenshots and tool results go without a model call.
+    const pruned = session.prune();
+    if (pruned.images || pruned.results) {
+      status(pruneNotice(pruned));
+      if (session.promptTokens() <= limit) return;
+    }
+    // One turn cannot be folded; its own trimming above is all there is.
+    if (session.turns() < 2) return;
+    status(`Compacting the conversation (about ${promptTokens.toLocaleString()} tokens)…`);
     try {
-      const result = await session.compact(0.5, signal);
-      if (result)
-        this.emit({
-          type: "status",
-          id: crypto.randomUUID(),
-          text: compactionNotice({ ...result, promptTokens }, limit),
-        });
+      // Fold until under the limit, a few times at most; one turn always stays.
+      for (let round = 0; round < 3; round++) {
+        const result = await session.compact(0.5, signal);
+        if (!result) break;
+        status(compactionNotice({ ...result, promptTokens }, limit));
+        if (session.promptTokens() <= limit) break;
+      }
     } catch (error) {
       if (signal.aborted) return;
+      console.warn("compaction failed", error);
       this.emit({
         type: "status",
         id: crypto.randomUUID(),

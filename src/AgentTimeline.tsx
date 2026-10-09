@@ -1,6 +1,6 @@
 // User/assistant row layout adapted from T3 Code MessagesTimeline.tsx (MIT; vendor/t3code/LICENSE.txt).
 
-import { FileCode2, Terminal, Wrench } from "lucide-react";
+import { Archive, FileCode2, Terminal, Wrench } from "lucide-react";
 import { Fragment } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -15,6 +15,9 @@ import "./vendor/t3code/markdown.css";
 
 // The SDK payload is transport data, not the visible tool result. This mirrors
 // upstream buildToolCallExpandedBody: command/detail/output, with duplicates removed.
+/** Context-management notices from the runner (trimming and compaction). */
+const contextNotice = /^(Trimmed |Compacting |Compacted |Could not compact)/;
+
 function toolFailed(event: AgentEvent) {
   try {
     return ["error", "failed"].includes(JSON.parse(event.details ?? "{}").status);
@@ -87,7 +90,13 @@ export function AgentTimeline({
   onSendQueuedNow: (id: string) => void;
   onCancelQueued: (id: string) => void;
 }) {
-  const timeline = events.filter((event) => ["user", "text", "tool"].includes(event.type));
+  // Status events are transient, except the context notices, which explain
+  // why the agent's memory of the conversation changed.
+  const timeline = events.filter(
+    (event) =>
+      ["user", "text", "tool"].includes(event.type) ||
+      (event.type === "status" && contextNotice.test(event.text)),
+  );
   const activeStart = timeline.findLastIndex((event) => event.type === "user") + 1;
   const latest = timeline.at(-1);
   // Upstream keeps the latest successful tool label alive until the next
@@ -103,6 +112,16 @@ export function AgentTimeline({
   const rows = timeline.map((event, index) => {
     if (event.type === "tool")
       return <ToolActivity key={event.id} event={event} active={event.id === activeToolId} />;
+    if (event.type === "status")
+      return (
+        <SimpleWorkEntryRow
+          key={event.id}
+          label={event.text.split(/[:(]/)[0]?.trim() ?? event.text}
+          body={event.text}
+          failed={/^Could not/.test(event.text)}
+          icon={<Archive className="size-4 shrink-0 stroke-[1.8]" />}
+        />
+      );
     if (event.type === "user")
       return (
         <article className="chat-user group flex flex-col items-end gap-1" key={event.id}>

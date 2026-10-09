@@ -55,6 +55,8 @@ function threadSession(): ProviderSession & { messages: string[] } {
       this.messages = state as string[];
     },
     promptTokens: () => 0,
+    prune: () => ({ images: 0, results: 0 }),
+    turns: () => 0,
     compact: async () => null,
     async run(prompt, context: TurnContext) {
       this.messages.push(prompt.text);

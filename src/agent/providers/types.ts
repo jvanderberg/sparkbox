@@ -77,6 +77,8 @@ export type TurnContext = {
   fetchProxy?: { url: string; token: string };
   /** Project secrets, for ${NAME} placeholders in download URLs. */
   secrets?: Record<string, string>;
+  /** Prompt tokens past which a running turn trims older images and tool results; 0 is off. */
+  contextLimit?: number;
   /** The history changed; the runner saves it so a reload mid-turn keeps the thread. */
   checkpoint?: () => void;
 };
@@ -100,6 +102,13 @@ export interface ProviderSession {
   import(state: unknown): void;
   /** Prompt tokens the provider reported for the last request, or an estimate. */
   promptTokens(): number;
+  /**
+   * Drop older images and shorten older tool results in place, keeping the
+   * last few of each. Returns what was trimmed.
+   */
+  prune(): { images: number; results: number };
+  /** How many user turns the history holds; folding needs at least two. */
+  turns(): number;
   /**
    * Fold the oldest `fraction` of turns into a model-written summary. Null
    * when there are too few turns to fold.
