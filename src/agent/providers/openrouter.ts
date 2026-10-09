@@ -20,6 +20,7 @@ import {
 } from "../tools.ts";
 import {
   describeFailure,
+  interruptedToolOutput,
   type Prompt,
   type ProviderId,
   type ProviderSession,
@@ -116,7 +117,23 @@ export class OpenRouterSession implements ProviderSession {
     return { turns: split.turns };
   }
 
+  /** Tool messages for the calls a reload or stop left unanswered. */
+  private unanswered(): ChatCompletionMessageParam[] {
+    const index = this.messages.findLastIndex((message) => message.role === "assistant");
+    const assistant = this.messages[index];
+    if (assistant?.role !== "assistant" || !assistant.tool_calls?.length) return [];
+    const answered = new Set(
+      this.messages
+        .slice(index + 1)
+        .flatMap((message) => (message.role === "tool" ? [message.tool_call_id] : [])),
+    );
+    return assistant.tool_calls
+      .filter((call) => !answered.has(call.id))
+      .map((call) => ({ role: "tool", tool_call_id: call.id, content: interruptedToolOutput }));
+  }
+
   async run(prompt: Prompt, context: TurnContext) {
+    this.messages.push(...this.unanswered());
     this.messages.push({
       role: "user",
       content: [
@@ -127,6 +144,7 @@ export class OpenRouterSession implements ProviderSession {
         { type: "text" as const, text: prompt.text || "(see attached images)" },
       ],
     });
+    context.checkpoint?.();
     for (let step = 0; step < 200; step++) {
       if (context.signal.aborted) return;
       const textId = crypto.randomUUID();
@@ -156,6 +174,7 @@ export class OpenRouterSession implements ProviderSession {
         content: assistant.content ?? "",
         ...(assistant.tool_calls?.length ? { tool_calls: assistant.tool_calls } : {}),
       });
+      context.checkpoint?.();
       const calls = assistant.tool_calls ?? [];
       if (!calls.length) return;
       for (const call of calls) {
@@ -205,6 +224,7 @@ export class OpenRouterSession implements ProviderSession {
                 },
               ],
             });
+          context.checkpoint?.();
           continue;
         }
         const result = await runGenericTool(context.sandbox, call.function.name, args, {
@@ -227,6 +247,7 @@ export class OpenRouterSession implements ProviderSession {
           output: result.output,
         });
         this.messages.push({ role: "tool", tool_call_id: call.id, content: result.output });
+        context.checkpoint?.();
       }
     }
   }

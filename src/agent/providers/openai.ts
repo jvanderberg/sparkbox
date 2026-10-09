@@ -16,7 +16,13 @@ import {
   type ToolOutcome,
   truncate,
 } from "../tools.ts";
-import { describeFailure, type Prompt, type ProviderSession, type TurnContext } from "./types.ts";
+import {
+  describeFailure,
+  interruptedToolOutput,
+  type Prompt,
+  type ProviderSession,
+  type TurnContext,
+} from "./types.ts";
 
 const tools: Tool[] = [
   { type: "shell", environment: { type: "local" } },
@@ -100,7 +106,40 @@ export class OpenAISession implements ProviderSession {
     return { turns: split.turns };
   }
 
+  /** Outputs for the tool calls a reload or stop left unanswered. */
+  private unanswered(): ResponseInputItem[] {
+    const answered = new Set<string>();
+    for (const item of this.items)
+      if ("call_id" in item && item.call_id && item.type?.endsWith("_output"))
+        answered.add(item.call_id);
+    const outputs: ResponseInputItem[] = [];
+    for (const item of this.items) {
+      if (!("call_id" in item) || !item.call_id || answered.has(item.call_id)) continue;
+      if (item.type === "function_call")
+        outputs.push({
+          type: "function_call_output",
+          call_id: item.call_id,
+          output: interruptedToolOutput,
+        });
+      else if (item.type === "shell_call")
+        outputs.push({
+          type: "shell_call_output",
+          call_id: item.call_id,
+          output: [{ stdout: "", stderr: interruptedToolOutput, outcome: { type: "timeout" } }],
+        } as ResponseInputItem);
+      else if (item.type === "apply_patch_call")
+        outputs.push({
+          type: "apply_patch_call_output",
+          call_id: item.call_id,
+          status: "failed",
+          output: interruptedToolOutput,
+        } as ResponseInputItem);
+    }
+    return outputs;
+  }
+
   async run(prompt: Prompt, context: TurnContext) {
+    this.items.push(...this.unanswered());
     this.items.push({
       role: "user",
       content: [
@@ -112,6 +151,7 @@ export class OpenAISession implements ProviderSession {
         { type: "input_text" as const, text: prompt.text || "(see attached images)" },
       ],
     });
+    context.checkpoint?.();
     for (let step = 0; step < 200; step++) {
       if (context.signal.aborted) return;
       const textId = crypto.randomUUID();
@@ -138,6 +178,7 @@ export class OpenAISession implements ProviderSession {
       for (const item of response.output) {
         // Reasoning items must be echoed back for the next step to keep context.
         this.items.push(item as ResponseInputItem);
+        context.checkpoint?.();
         if (item.type === "shell_call") {
           const input = { command: item.action.commands.join("\n") };
           context.sink.tool(item.call_id, "shell", { status: "running", input });
@@ -269,6 +310,7 @@ export class OpenAISession implements ProviderSession {
       }
       if (!calls.length) return;
       this.items.push(...calls);
+      context.checkpoint?.();
     }
   }
 }

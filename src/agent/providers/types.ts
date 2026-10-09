@@ -77,7 +77,16 @@ export type TurnContext = {
   fetchProxy?: { url: string; token: string };
   /** Project secrets, for ${NAME} placeholders in download URLs. */
   secrets?: Record<string, string>;
+  /** The history changed; the runner saves it so a reload mid-turn keeps the thread. */
+  checkpoint?: () => void;
 };
+
+/**
+ * The result recorded for a tool call that never finished, because the page
+ * was reloaded or the turn was stopped. Providers reject a call with no result.
+ */
+export const interruptedToolOutput =
+  "Interrupted: the turn ended before this tool finished, so its result is unknown.";
 
 /** One provider-specific conversation. History stays in memory per session. */
 export interface ProviderSession {
