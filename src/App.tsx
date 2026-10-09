@@ -182,7 +182,16 @@ export function App() {
           onClose={() => setConnecting(false)}
         />
       )}
-      {opening && <GitHubOpen onOpen={openRepository} onClose={() => setOpening(false)} />}
+      {opening && (
+        <GitHubOpen
+          onOpen={openRepository}
+          onConnect={() => {
+            setOpening(false);
+            setConnecting(true);
+          }}
+          onClose={() => setOpening(false)}
+        />
+      )}
     </>
   );
 

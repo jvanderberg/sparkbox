@@ -23,6 +23,8 @@ export function createGitHubController(options: {
       repository: current ? `${current.owner}/${current.name}` : undefined,
       siteUrl: current?.siteUrl,
       lastBuild: siteStatus.get(options.project),
+      autoBackup: Boolean(current?.auto && githubAccount.get()),
+      lastBackup: siteStatus.lastBackup(options.project),
     };
   };
 
@@ -40,6 +42,18 @@ export function createGitHubController(options: {
         lines.push(`Repository: ${current.htmlUrl} (origin; branch ${current.branch}).`);
         lines.push(current.siteUrl ? `Site: ${current.siteUrl}` : "Site: not published yet.");
         if (current.pushedAt) lines.push(`Last push: ${current.pushedAt}.`);
+        lines.push(
+          current.auto && account
+            ? "Automatic backup: on. Sparkbox commits and pushes when your turn ends; do not offer to push."
+            : "Automatic backup: off. git push works when the user asks.",
+        );
+        const backup = siteStatus.lastBackup(options.project);
+        if (backup)
+          lines.push(
+            backup.ok
+              ? `Last automatic backup succeeded at ${backup.at}.`
+              : `Last automatic backup FAILED at ${backup.at}: ${backup.error ?? "unknown error"}`,
+          );
       } else if (account)
         lines.push(
           'No repository yet: the user\'s first click on "Back up" or "Publish" creates one.',

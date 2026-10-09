@@ -51,7 +51,7 @@ export function describeGitError(error: unknown): string {
     return "This merge is more than Sparkbox's git can do. Commit, then pull with --no-rebase on a machine with git.";
   if (error instanceof git.Errors.HttpError) {
     if (error.data.statusCode === 401 || error.data.statusCode === 403)
-      return "GitHub refused the push. Sign in to GitHub again from Settings.";
+      return "GitHub refused the push: the sign-in is no longer valid. Sign in again from the project header or Settings.";
     if (error.data.statusCode === 404) return "GitHub has no such repository, or no access to it.";
     return `GitHub answered ${error.data.statusCode} ${error.data.statusMessage}.`;
   }

@@ -41,7 +41,8 @@ function describe(status: number, body: unknown) {
   const data = body as { message?: string; errors?: { message?: string }[] } | null;
   const detail = data?.errors?.map((entry) => entry.message).filter(Boolean)[0];
   const message = data?.message ?? "";
-  if (status === 401) return "GitHub no longer accepts this sign-in. Sign in again.";
+  if (status === 401)
+    return "GitHub no longer accepts this sign-in. Sign in again from the project header or Settings.";
   if (status === 403 && /rate limit/i.test(message))
     return "GitHub's rate limit is reached for this account. Try again in a while.";
   if (status === 403 || status === 404)

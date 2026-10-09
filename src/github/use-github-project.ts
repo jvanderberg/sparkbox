@@ -175,12 +175,14 @@ export function useGitHubProject(options: {
     try {
       await git.push();
     } catch (error) {
+      forgetIfExpired(error);
       if (!/Pull first/.test(describeGitError(error))) throw new Error(describeGitError(error));
       try {
         await git.pull();
         onChanged();
         await git.push();
       } catch (again) {
+        forgetIfExpired(again);
         throw new Error(describeGitError(again));
       }
     }
@@ -238,15 +240,18 @@ export function useGitHubProject(options: {
       const current = linkRef.current;
       const message = commitMessage(lastPrompt.current);
       if (current?.auto && githubAccount.get())
-        void backUp(message).catch((error: Error) =>
-          report(`Automatic backup failed: ${error.message}`, true),
-        );
+        void backUp(message)
+          .then(() => siteStatus.recordBackup(project.id, { ok: true }))
+          .catch((error: Error) => {
+            siteStatus.recordBackup(project.id, { ok: false, error: error.message });
+            report(`Automatic backup failed: ${error.message}`, true);
+          });
       else
         void run("backing-up", async () => {
           await commitAll(message);
         }).catch((error: Error) => report(`Automatic commit failed: ${error.message}`, true));
     });
-  }, [runner, backUp, run, commitAll, report]);
+  }, [runner, backUp, run, commitAll, report, project.id]);
 
   useEffect(
     () => () => {

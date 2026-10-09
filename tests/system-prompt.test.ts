@@ -47,6 +47,19 @@ describe("system prompt sharing", () => {
       },
     });
     expect(prompt).toContain("backs up to ada/demo");
+    expect(prompt).toContain("Automatic backup is off");
+    const auto = systemPrompt({
+      ...base,
+      networkEnabled: true,
+      github: {
+        connected: true,
+        repository: "ada/demo",
+        autoBackup: true,
+        lastBackup: { ok: false, at: "2026-10-09T00:00:00Z", error: "sign-in expired" },
+      },
+    });
+    expect(auto).toContain("never offer to push");
+    expect(auto).toContain("FAILED (sign-in expired)");
     expect(prompt).toContain("Published at https://ada.github.io/demo/");
     expect(prompt).toContain("FAILED: tsc exit 2");
     expect(prompt).not.toContain("GitHub: not connected");

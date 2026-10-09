@@ -12,9 +12,12 @@ type Listed = Repository & { description: string; updatedAt: string; fork: boole
  */
 export function GitHubOpen({
   onOpen,
+  onConnect,
   onClose,
 }: {
   onOpen: (repo: Repository) => Promise<void>;
+  /** Open the sign-in dialog, when GitHub no longer accepts the token. */
+  onConnect: () => void;
   onClose: () => void;
 }) {
   const [repos, setRepos] = useState<Listed[] | null>(null);
@@ -87,6 +90,13 @@ export function GitHubOpen({
           <p className="form-error" role="alert">
             {error}
           </p>
+        )}
+        {error && /sign-in|Connect GitHub/i.test(error) && (
+          <div className="form-actions">
+            <button type="button" className="button primary" onClick={onConnect}>
+              Sign in to GitHub
+            </button>
+          </div>
         )}
       </div>
     </Modal>

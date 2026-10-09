@@ -12,9 +12,19 @@ function githubLines(state: GitHubState | undefined): string {
     return 'not connected. Once the app runs and looks right for the first time, tell the user once, in one sentence, that clicking "Back up to GitHub" in the header keeps a copy of the project on GitHub and lets Publish put it online; do not repeat it every turn. Until then git push is not possible.';
   const parts = [
     state.repository
-      ? `connected; this project backs up to ${state.repository} (origin). git push works.`
+      ? `connected; this project backs up to ${state.repository} (origin).`
       : "connected, but this project has no repository yet: the user's first click on Back up or Publish creates one.",
   ];
+  if (state.repository)
+    parts.push(
+      state.autoBackup
+        ? "Automatic backup is on: Sparkbox commits and pushes by itself the moment your turn ends, so never offer to push, never say a push is pending, and do not run git push yourself unless the user asks for it mid-turn."
+        : "Automatic backup is off: git push works, and the user may ask you to push.",
+    );
+  if (state.lastBackup && !state.lastBackup.ok)
+    parts.push(
+      `The last automatic backup FAILED (${state.lastBackup.error ?? "unknown error"}). Tell the user once, in one sentence, that the backup is failing and that the header's "Sign in to GitHub again" or "Back up" button is the fix; then carry on.`,
+    );
   if (state.siteUrl) parts.push(`Published at ${state.siteUrl}.`);
   if (state.lastBuild)
     parts.push(

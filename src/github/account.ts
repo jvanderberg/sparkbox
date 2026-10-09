@@ -68,6 +68,9 @@ export const githubAccount = {
 /** Clear a sign-in GitHub no longer accepts, so the next click asks again. */
 export function forgetIfExpired(error: unknown) {
   if (error instanceof GitHubError && error.status === 401) githubAccount.disconnect();
+  // isomorphic-git's HttpError: a push or pull GitHub refused for the token.
+  const data = (error as { data?: { statusCode?: number } } | null)?.data;
+  if (data && (data.statusCode === 401 || data.statusCode === 403)) githubAccount.disconnect();
 }
 
 export function useGitHubAccount(): GitHubAccount {

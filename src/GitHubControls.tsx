@@ -24,7 +24,7 @@ export function GitHubControls({
   onError: (message: string) => void;
 }) {
   const account = useGitHubAccount();
-  const [connecting, setConnecting] = useState<null | "backUp" | "publish">(null);
+  const [connecting, setConnecting] = useState<null | "backUp" | "publish" | "signIn">(null);
   const { link, busy, site } = github;
 
   async function attempt(action: "backUp" | "publish") {
@@ -93,18 +93,27 @@ export function GitHubControls({
           reason={
             connecting === "publish"
               ? "Publishing puts this project in a public GitHub repository and serves it with GitHub Pages."
-              : "Backing up puts this project in a public GitHub repository under your account, so it survives this browser."
+              : connecting === "signIn"
+                ? "GitHub no longer accepts the earlier sign-in. Sign in again to keep backing this project up."
+                : "Backing up puts this project in a public GitHub repository under your account, so it survives this browser."
           }
           onConnected={() => {
             const action = connecting;
             setConnecting(null);
-            void attempt(action);
+            if (action && action !== "signIn") void attempt(action);
           }}
           onClose={() => setConnecting(null)}
         />
       )}
       {account === null && link && (
-        <span className="workspace-privacy">Sign in to GitHub again to back up</span>
+        <button
+          type="button"
+          className="button small primary"
+          onClick={() => setConnecting("signIn")}
+          title="The earlier GitHub sign-in is no longer valid"
+        >
+          Sign in to GitHub again
+        </button>
       )}
     </>
   );

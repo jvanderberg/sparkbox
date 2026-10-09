@@ -17,4 +17,8 @@ export type GitHubState = {
   lastBuild?: { state: "building" | "live" | "failed"; detail?: string };
   /** Files changed since the last commit. */
   uncommitted?: number;
+  /** Whether Sparkbox commits and pushes on its own after each turn. */
+  autoBackup?: boolean;
+  /** How the last automatic backup went. */
+  lastBackup?: { ok: boolean; at: string; error?: string };
 };
