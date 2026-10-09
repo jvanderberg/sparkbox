@@ -1,5 +1,6 @@
 import type {
   BrowserServer,
+  CommandRef,
   Process,
   Wasmer as WasmerClient,
   Sandbox as WasmerSandboxHandle,
@@ -77,7 +78,22 @@ const EXIT_GRACE_MS = 30_000;
 export const restartedNotice =
   "[the sandbox runtime stopped responding and was rebuilt; project files are intact, but node_modules is gone: start the preview again (it reinstalls dependencies) or run pnpm install]";
 
-type Boot = { client: WasmerClient; handle: WasmerSandboxHandle };
+type Boot = { client: WasmerClient; handle: WasmerSandboxHandle; shell: CommandRef };
+
+/**
+ * Printed by the terminal's bash before every prompt: an operating system
+ * command the page's terminal intercepts to learn that a command finished.
+ */
+export const terminalPromptCode = 7700;
+
+/** An interactive bash attached to a terminal. */
+export type TerminalSession = {
+  write: (data: string) => void;
+  resize: (columns: number, rows: number) => void;
+  kill: () => Promise<void>;
+  /** The exit code, or null when the runtime was rebuilt underneath it. */
+  done: Promise<number | null>;
+};
 
 /**
  * A Wasmer WASIX sandbox running inside the page. `/workspace` holds the
@@ -115,6 +131,7 @@ export class WasmerSandbox implements Sandbox {
   private constructor(
     private client: WasmerClient,
     private handle: WasmerSandboxHandle,
+    private shellCommand: CommandRef,
     readonly workspace: string,
     readonly restored: boolean,
     private wispUrl: string | undefined,
@@ -140,6 +157,7 @@ export class WasmerSandbox implements Sandbox {
     const sandbox = new WasmerSandbox(
       boot.client,
       boot.handle,
+      boot.shell,
       options.workspace,
       Boolean(snapshot),
       options.wispUrl,
@@ -204,9 +222,10 @@ export class WasmerSandbox implements Sandbox {
     // Edge.js depends on wasmer/bash too, so qualify the shell by package to
     // avoid an ambiguous `bash` selector.
     const bash = await client.packages.load(sandboxPackages[0]);
+    const shell = bash.command("bash");
     const handle = await client.sandboxes.create({
       packages: [bash, ...sandboxPackages.slice(1)],
-      shell: bash.command("bash"),
+      shell,
       files,
       env: {
         HOME: "/workspace",
@@ -235,7 +254,7 @@ export class WasmerSandbox implements Sandbox {
         });
       },
     });
-    return { client, handle };
+    return { client, handle, shell };
   }
 
   /** Rebuild the runtime after its worker pool died, keeping the files. */
@@ -258,6 +277,7 @@ export class WasmerSandbox implements Sandbox {
       const boot = await WasmerSandbox.boot(files, this.wispUrl);
       this.client = boot.client;
       this.handle = boot.handle;
+      this.shellCommand = boot.shell;
       for (const listener of this.restartListeners) listener();
       this.changed();
     })().finally(() => {
@@ -689,6 +709,73 @@ export class WasmerSandbox implements Sandbox {
         await process.kill().catch(() => {});
       },
     };
+  }
+
+  /**
+   * Start an interactive bash on a terminal of the given size. Before each
+   * prompt it prints the `terminalPromptCode` sequence; the page answers it
+   * with `commandFinished` so files the command wrote are noticed.
+   */
+  async openTerminal(
+    size: { columns: number; rows: number },
+    onOutput: (data: Uint8Array) => void,
+  ): Promise<TerminalSession> {
+    const process = await this.recover(() =>
+      deadline(
+        this.handle
+          .command(this.shellCommand, ["-i"], {
+            cwd: this.root,
+            env: {
+              ...this.environment,
+              PS1: "\\[\\e[1;32m\\]\\w\\[\\e[0m\\] $ ",
+              PROMPT_COMMAND: `printf '\\033]${terminalPromptCode};\\007'`,
+              // HOME is the project; history there would be committed and pushed.
+              HISTFILE: "/tmp/.bash_history",
+            },
+          })
+          .spawn({ terminal: size }),
+        SPAWN_DEADLINE_MS,
+        "start a process",
+      ),
+    );
+    this.processes.add(process);
+    const pump = async (stream: typeof process.stdout) => {
+      if (stream) for await (const chunk of stream) onOutput(chunk);
+    };
+    void pump(process.stdout);
+    void pump(process.stderr);
+    // A rebuilt runtime never reports this process's exit.
+    let detach = () => {};
+    const restarted = new Promise<null>((resolve) => {
+      detach = this.onRestart(() => resolve(null));
+    });
+    const done = Promise.race([
+      process.wait().then((output) => output.exitCode),
+      restarted,
+    ]).finally(() => {
+      detach();
+      this.processes.delete(process);
+    });
+    return {
+      write: (data) => void process.stdin?.write(data).catch(() => {}),
+      resize: (columns, rows) => {
+        try {
+          process.resizeTerminal(columns, rows);
+        } catch {
+          // The shell has exited; the next one starts at the new size.
+        }
+      },
+      kill: async () => {
+        await process.kill().catch(() => {});
+      },
+      done,
+    };
+  }
+
+  /** Notice what a command run outside `exec` (in the terminal) changed. */
+  async commandFinished() {
+    await this.detectChanges().catch(() => {});
+    this.changed();
   }
 
   /** Resolve once the guest listens on `port`. */

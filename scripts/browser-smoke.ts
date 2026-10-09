@@ -263,6 +263,41 @@ button.addEventListener("click", () => {
   if (await expand.isVisible()) await expand.click();
   await page.getByRole("treeitem", { name: /index\.html/ }).waitFor({ timeout: 20_000 });
   await page.screenshot({ path: `artifacts/smoke-${label}-files.png` });
+  // The terminal is an interactive bash in the sandbox. A file it writes
+  // reaches the explorer once the prompt returns; on phones the key row
+  // supplies the arrows a phone keyboard lacks. History stays out of the project.
+  await tabs.getByRole("button", { name: "Terminal" }).click();
+  const terminal = page.locator(".terminal-host");
+  const terminalText = () => terminal.locator(".xterm-rows").innerText();
+  const terminalShows = async (text: string, times = 1) => {
+    const until = Date.now() + 30_000;
+    while ((await terminalText()).split(text).length - 1 < times) {
+      if (Date.now() > until)
+        throw new Error(`the terminal never showed ${text}:\n${await terminalText()}`);
+      await page.waitForTimeout(200);
+    }
+  };
+  await terminalShows("~ $");
+  await terminal.click();
+  await page.keyboard.type("echo terminal > term.txt && echo wrote-$((6*7))\n");
+  await terminalShows("wrote-42");
+  if (options.mobile) {
+    await page.getByRole("button", { name: "Up", exact: true }).click();
+    await page.keyboard.press("Enter");
+    await terminalShows("wrote-42", 2);
+  }
+  await page.keyboard.type("exit\n");
+  await terminalShows("Shell exited with code 0");
+  await page.screenshot({ path: `artifacts/smoke-${label}-terminal.png` });
+  const prompts = (await terminalText()).split("~ $").length - 1;
+  await page.keyboard.press("Enter");
+  await terminalShows("~ $", prompts + 1);
+  await tabs.getByRole("button", { name: "Files" }).click();
+  await page.getByRole("treeitem", { name: /term\.txt/ }).waitFor({ timeout: 20_000 });
+  if ((await exec("ls -a")).stdout.includes(".bash_history"))
+    throw new Error("the terminal wrote its history into the project");
+  await exec("rm term.txt");
+  console.log(`${label} terminal runs commands and the explorer sees their files`);
   // The preview command backgrounds a second server, the shape of a Vite app
   // with an API: stopping the preview has to take that one down too.
   await write(

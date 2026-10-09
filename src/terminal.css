@@ -1,0 +1,76 @@
+/* The Terminal view: a toolbar like the preview's, the terminal filling the
+   rest, and on touch screens a row of the keys a phone keyboard lacks. */
+/* Outranks the Civic Spark panel padding, which loads after this file. */
+.workspace-screen .workspace-panel.terminal-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 0;
+  overflow: hidden;
+  background: var(--app-background);
+}
+.workspace-screen .workspace-panel.terminal-panel[hidden] {
+  display: none;
+}
+.terminal-toolbar {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 2px;
+  padding: 3px 6px 3px 12px;
+  border-bottom: 1px solid var(--app-border);
+  background: var(--app-muted-surface);
+}
+.terminal-title {
+  flex: 1;
+  color: var(--app-muted);
+  font:
+    12px / 1.5 ui-monospace,
+    monospace;
+}
+.terminal-host {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+/* The fit addon subtracts the terminal element's padding, not its parent's. */
+.terminal-host .xterm {
+  height: 100%;
+  padding: 6px 0 0 10px;
+}
+/* xterm's stylesheet paints the viewport black; let the panel show through. */
+.terminal-host .xterm .xterm-viewport {
+  background-color: transparent;
+}
+/* Below 16px iOS zooms the page when the terminal takes focus. */
+.terminal-host .xterm-helper-textarea {
+  font-size: 16px;
+}
+.terminal-keys {
+  display: none;
+}
+@media (pointer: coarse) {
+  .terminal-keys {
+    display: flex;
+    flex-shrink: 0;
+    overflow-x: auto;
+    border-top: 1px solid var(--app-border);
+    background: var(--app-muted-surface);
+  }
+  .terminal-keys button {
+    flex: 1 0 auto;
+    min-width: 44px;
+    min-height: 44px;
+    padding: 0 10px;
+    border: 0;
+    background: transparent;
+    color: var(--app-text);
+    font:
+      14px / 1 ui-monospace,
+      monospace;
+    transition: background-color var(--motion-fast) var(--ease-out);
+  }
+  .terminal-keys button:active {
+    background: color-mix(in srgb, var(--app-text) 10%, transparent);
+  }
+}

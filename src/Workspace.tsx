@@ -13,10 +13,11 @@ import { useGitHubAccount } from "./github/account.ts";
 import { NeedsAccount, useGitHubProject } from "./github/use-github-project.ts";
 import { PreviewPanel, type usePreview } from "./Preview.tsx";
 import type { WasmerSandbox } from "./sandbox/wasmer.ts";
+import { TerminalPanel } from "./Terminal.tsx";
 import { useWorkspaceViewport } from "./use-workspace-viewport.ts";
 import { FILE_LIMIT, type Changes as WorkspaceChanges } from "./workspace/types.ts";
 
-type WorkspaceView = "files" | "changes" | "agent" | "preview";
+type WorkspaceView = "files" | "changes" | "agent" | "preview" | "terminal";
 type FileContent = { path: string; content: string; revision: string };
 
 const encoder = new TextEncoder();
@@ -61,7 +62,7 @@ export function Workspace({
   const [view, setView] = useState<WorkspaceView>(() => {
     try {
       const saved = localStorage.getItem(`sparkbox:workspace:${workspace}:tab`);
-      if (saved && ["files", "changes", "agent", "preview"].includes(saved))
+      if (saved && ["files", "changes", "agent", "preview", "terminal"].includes(saved))
         return saved as WorkspaceView;
     } catch {
       // Preferences are optional.
@@ -299,6 +300,7 @@ export function Workspace({
               ["preview", "Preview"],
               ["files", "Files"],
               ["changes", "Changes"],
+              ["terminal", "Terminal"],
             ] as const
           ).map(([id, label]) => (
             <button type="button" key={id} aria-pressed={view === id} onClick={() => setView(id)}>
@@ -374,6 +376,7 @@ export function Workspace({
         onFullScreen={() => setPreviewFull(true)}
         onExitFullScreen={() => setPreviewFull(false)}
       />
+      <TerminalPanel sandbox={sandbox} visible={view === "terminal"} />
       <div className="workspace-files" hidden={view !== "files"}>
         {externalChange && (
           <p className="auth-pending" role="status">
