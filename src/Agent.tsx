@@ -9,7 +9,8 @@ import { settings } from "./agent/settings.ts";
 import { retainEvent } from "./agents/history.ts";
 import { type AgentImage, agentImagesSchema, imageCountLimit } from "./agents/images.ts";
 import { type AgentEvent, agentQueueLimit, type QueuedPrompt } from "./agents/protocol.ts";
-import { type HostConfig, hostConfig, redeemInvite } from "./config.ts";
+import { type HostConfig, hostConfig } from "./config.ts";
+import { invite } from "./invite.ts";
 import { Button } from "./vendor/t3code/Button.tsx";
 import { ComposerBanner } from "./vendor/t3code/ComposerBanner.tsx";
 import { ComposerPrimaryActions } from "./vendor/t3code/ComposerPrimaryActions.tsx";
@@ -243,7 +244,7 @@ export function Agent({
     if (provider === "sparkbox") {
       setRedeeming(true);
       try {
-        settings.setKey("sparkbox", await redeemInvite(value));
+        await invite.redeem(value);
         setHasKey(true);
         setKey("");
         setError("");
@@ -382,9 +383,12 @@ export function Agent({
                           />
                         )}
                         {hasKey ? (
-                          <Button size="xs" variant="outline" type="button" onClick={clearKey}>
-                            {provider === "sparkbox" ? "Forget invite" : "Remove key"}
-                          </Button>
+                          // The invite also runs the sandbox's network; Settings forgets it.
+                          provider !== "sparkbox" && (
+                            <Button size="xs" variant="outline" type="button" onClick={clearKey}>
+                              Remove key
+                            </Button>
+                          )
                         ) : (
                           <Button
                             size="xs"

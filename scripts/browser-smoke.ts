@@ -104,6 +104,31 @@ function fakeGitHub(page: Page) {
   };
 }
 
+const smokeInvite = "smoke-invite";
+
+/**
+ * Make the host ask for an invite whether or not one is running, and answer
+ * the invite and relay endpoints: the code is accepted, and the relay stays
+ * off so the sandbox runs without a network as the rest of the smoke expects.
+ */
+async function requireInvite(page: Page) {
+  await page.route("**/config.json", async (route) => {
+    const response = await route.fetch().catch(() => null);
+    const config = response?.ok() ? await response.json() : {};
+    await route.fulfill({ json: { ...config, invites: true } });
+  });
+  await page.route("**/api/invite", async (route) => {
+    const { code } = route.request().postDataJSON() as { code: string };
+    if (code !== smokeInvite)
+      return route.fulfill({ status: 403, json: { error: "That invite code is not valid." } });
+    // The client reads only the expiry in the middle.
+    await route.fulfill({ json: { token: `smoke.${Date.now() + 86_400_000}.signature` } });
+  });
+  await page.route("**/api/relay", (route) =>
+    route.fulfill({ status: 503, json: { error: "The relay is not enabled." } }),
+  );
+}
+
 async function run(label: string, options: { mobile?: boolean; dark?: boolean }) {
   const browser = await chromium.launch({ headless: true, args: launchArgs });
   const context = await browser.newContext({
@@ -118,14 +143,26 @@ async function run(label: string, options: { mobile?: boolean; dark?: boolean })
   const page = await context.newPage();
   const github = fakeGitHub(page);
   await github.install();
+  await requireInvite(page);
   const errors: string[] = [];
   page.on("console", (message) => {
+    // The wrong invite code and the relay that stays off fail on purpose.
+    if (/\/api\/(invite|relay)$/.test(message.location().url)) return;
     if (message.type() === "error") errors.push(message.text());
   });
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto(base);
   const isolated = await page.evaluate(() => globalThis.crossOriginIsolated);
   if (!isolated) throw new Error("page is not cross-origin isolated");
+  // A host that hands out invites asks for one before anything else.
+  const inviteCode = page.getByLabel("Invite code", { exact: true });
+  await inviteCode.fill("wrong-code");
+  await page.getByRole("button", { name: "Continue" }).click();
+  await page.getByText("That invite code is not valid.").waitFor({ timeout: 10_000 });
+  await page.screenshot({ path: `artifacts/${label}-invite.png` });
+  await inviteCode.fill(smokeInvite);
+  await page.getByRole("button", { name: "Continue" }).click();
+  console.log(`${label} invite gate passed`);
   // A first visit lands on "Create a project".
   await page.getByLabel("Project name", { exact: true }).fill(`Smoke ${label}`);
   await page.getByRole("button", { name: "Create a project" }).click();

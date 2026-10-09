@@ -23,19 +23,22 @@ const page = await context.newPage();
 const errors: string[] = [];
 page.on("pageerror", (error) => errors.push(error.message));
 await page.goto(base);
-await page.getByLabel("New project name").fill("Host smoke");
-await page.getByRole("button", { name: "Create" }).click();
-await page.getByText("Sandbox ready").waitFor({ state: "attached", timeout: 240_000 });
 
-// Redeem the invite in the Sparkbox provider.
-await page.getByLabel("Agent provider").selectOption({ label: "Sparkbox" });
+// The host hands out invites, so the app asks for one before anything else.
 await page.getByLabel("Invite code").fill("wrong-code");
-await page.getByRole("button", { name: "Use invite" }).click();
+await page.getByRole("button", { name: "Continue" }).click();
 await page.getByText("That invite code is not valid.").waitFor({ timeout: 20_000 });
 await page.getByLabel("Invite code").fill(invite);
-await page.getByRole("button", { name: "Use invite" }).click();
+await page.getByRole("button", { name: "Continue" }).click();
 await page.getByLabel("Invite code").waitFor({ state: "detached", timeout: 20_000 });
 console.log("invite accepted");
+
+// The sandbox boots with the relay, since the invite came first.
+await page.getByLabel("Project name", { exact: true }).fill("Host smoke");
+await page.getByRole("button", { name: "Create a project" }).click();
+await page
+  .locator(".workspace-header h1", { hasText: "Host smoke" })
+  .waitFor({ state: "attached", timeout: 240_000 });
 
 // One free-agent turn through the proxy.
 await page.getByLabel("Message to agent").fill("Reply with exactly: PROXY_OK");
@@ -48,10 +51,6 @@ const thread = await page.locator(".chat-thread").innerText();
 if (!/PROXY_OK/.test(thread)) throw new Error(`free agent reply missing: ${thread.slice(-400)}`);
 console.log("free agent replied through the proxy");
 
-// Reopen the project so the sandbox boots with the relay, then use it.
-await page.getByRole("button", { name: "← Projects" }).click();
-await page.getByRole("button", { name: "Host smoke", exact: true }).click();
-await page.getByText("Sandbox ready").waitFor({ state: "attached", timeout: 240_000 });
 type Exec = (command: string) => Promise<{ stdout: string; stderr: string; exitCode: number }>;
 const run = (command: string) =>
   page.evaluate((c) => (window as unknown as { sparkboxExec: Exec }).sparkboxExec(c), command);

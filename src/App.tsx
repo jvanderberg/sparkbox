@@ -7,7 +7,7 @@ import { AgentRunner } from "./agent/runner.ts";
 import { isSecretName } from "./agent/secrets.ts";
 import { settings } from "./agent/settings.ts";
 import { Field, Modal } from "./components.tsx";
-import { type HostConfig, hostConfig, relayUrl } from "./config.ts";
+import { type HostConfig, hostConfig, RelayError, relayUrl } from "./config.ts";
 import { GitHubConnect } from "./GitHubConnect.tsx";
 import { GitHubOpen } from "./GitHubOpen.tsx";
 import { startGitBridge } from "./git/bridge.ts";
@@ -18,6 +18,8 @@ import type { Repository } from "./github/api.ts";
 import { completeGitHubLogin } from "./github/auth.ts";
 import { createGitHubController } from "./github/controller.ts";
 import { cloneUrl } from "./github/sync.ts";
+import { InviteGate } from "./InviteGate.tsx";
+import { invite, inviteExpiry, useInvite } from "./invite.ts";
 import { Landing } from "./Landing.tsx";
 import { Loading } from "./Loading.tsx";
 import { defaultPreviewOrigin, previewPort, usePreview } from "./Preview.tsx";
@@ -103,6 +105,10 @@ export function App() {
     void hostConfig().then(setHost);
   }, []);
   const account = useGitHubAccount();
+  const inviteToken = useInvite();
+  // A host that hands out invites asks for one first: without it the sandbox
+  // has no network. A relay of the user's own also does without.
+  const needsInvite = !inviteToken && !settings.wispUrl() && host?.invites !== false;
   // Connecting GitHub on its own, or as the first step of opening a repository.
   const [connecting, setConnecting] = useState<null | "connect" | "open">(null);
   const [opening, setOpening] = useState(false);
@@ -143,9 +149,9 @@ export function App() {
     // GitHub sends the user back here with a code to exchange: in the popup
     // (which stores the token for the opening tab and closes) or in this tab.
     void completeGitHubLogin()
-      .then(async (result) => {
+      .then((result) => {
         if (!result) return;
-        const login = await githubAccount.connect(result.token);
+        const { login } = result;
         if (result.popup) {
           window.close();
           // Still here: the browser would not close the window for us.
@@ -472,6 +478,19 @@ export function App() {
             </>
           )}
         </fieldset>
+        {host?.invites && inviteToken && (
+          <fieldset className="secrets">
+            <legend>Invite</legend>
+            <p className="muted">
+              This browser holds an invite until{" "}
+              {new Date(inviteExpiry(inviteToken)).toLocaleDateString()}. It runs the free agent and
+              gives the sandbox internet access.{" "}
+              <button type="button" className="link-button" onClick={() => invite.forget()}>
+                Forget invite
+              </button>
+            </p>
+          </fieldset>
+        )}
         <Field label="Preview origin">
           <input
             value={previewOrigin}
@@ -518,6 +537,16 @@ export function App() {
       </form>
     </Modal>
   );
+
+  if (needsInvite)
+    return (
+      <div className="app-frame" data-sidebar="closed">
+        {/* Nothing until the host says whether it needs an invite. */}
+        {host && <InviteGate onSettings={() => setSettingsOpen(true)} />}
+        {settingsModal}
+        {toast}
+      </div>
+    );
 
   const menu = <SidebarToggle open={sidebarOpen} onToggle={toggleSidebar} />;
   return (
@@ -631,12 +660,14 @@ function ProjectSession({
     let created: WasmerSandbox | null = null;
     // Outbound network: a relay the user configured, or the host's relay
     // through a short-lived ticket when this browser holds an invite token.
-    const token = settings.key("sparkbox");
+    const token = invite.token();
     const relay = settings.wispUrl()
       ? Promise.resolve(settings.wispUrl())
       : host.wispUrl && token
         ? relayUrl(token).catch((cause: Error) => {
             console.warn(`Network relay unavailable: ${cause.message}`);
+            // The host no longer accepts this invite; ask for the code again.
+            if (cause instanceof RelayError && cause.status === 401) invite.forget();
             return "";
           })
         : Promise.resolve("");
@@ -714,7 +745,7 @@ function ProjectSession({
             sandbox: instance,
             networkEnabled: () => Boolean(wispUrl),
             fetchProxy: () => {
-              const token = settings.key("sparkbox");
+              const token = invite.token();
               return host.fetchUrl && token ? { url: host.fetchUrl, token } : undefined;
             },
             secrets: () => settings.secrets(project.id),

@@ -25,19 +25,35 @@ export function GitHubConnect({
 }) {
   const [token, setToken] = useState("");
   const [busy, setBusy] = useState(false);
+  // The popup is open; the button stays live in case it was closed.
+  const [waiting, setWaiting] = useState(false);
   const [error, setError] = useState("");
   const [pasting, setPasting] = useState(!clientId);
 
-  async function connect(fn: () => Promise<string>) {
+  async function connect(token: string) {
     setBusy(true);
     setError("");
     try {
-      const login = await githubAccount.connect(await fn());
-      onConnected(login);
+      onConnected(await githubAccount.connect(token));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not connect to GitHub.");
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function signIn() {
+    setWaiting(true);
+    setError("");
+    try {
+      // The popup has already verified and stored the token.
+      await beginGitHubLogin(clientId);
+      const account = githubAccount.get();
+      if (account) onConnected(account.login);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not connect to GitHub.");
+    } finally {
+      setWaiting(false);
     }
   }
 
@@ -47,7 +63,7 @@ export function GitHubConnect({
         className="modal-body github-connect"
         onSubmit={(event) => {
           event.preventDefault();
-          void connect(async () => token);
+          void connect(token);
         }}
       >
         <p>{reason}</p>
@@ -60,11 +76,14 @@ export function GitHubConnect({
             type="button"
             className="button primary github-signin"
             disabled={busy}
-            onClick={() => void connect(() => beginGitHubLogin(clientId))}
+            onClick={() => void signIn()}
           >
-            {busy ? "Waiting for GitHub…" : "Sign in with GitHub"}
+            {waiting ? "Waiting for GitHub…" : "Sign in with GitHub"}
           </button>
         )}
+        <p className="muted github-waiting" hidden={!waiting}>
+          Finish signing in in the GitHub window. Closed it? Click the button again.
+        </p>
         {pasting ? (
           <>
             <Field label="Personal access token">

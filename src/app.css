@@ -102,6 +102,24 @@
   min-height: 44px;
   font-size: 14px;
 }
+.github-waiting,
+.invite-error {
+  transition:
+    opacity var(--motion-fast) var(--ease-out),
+    transform var(--motion-fast) var(--ease-out),
+    display var(--motion-fast) allow-discrete;
+}
+:is(.github-waiting, .invite-error)[hidden] {
+  display: none;
+  opacity: 0;
+  transform: translateY(-4px);
+}
+@starting-style {
+  :is(.github-waiting, .invite-error):not([hidden]) {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
 .github-open input {
   min-height: 44px;
   font-size: 16px;
