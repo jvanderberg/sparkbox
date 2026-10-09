@@ -9,7 +9,7 @@ import type { ProviderId } from "./providers/types.ts";
  */
 function githubLines(state: GitHubState | undefined): string {
   if (!state?.connected)
-    return 'not connected. Once the app runs and looks right for the first time, tell the user once, in one sentence, that clicking "Back up to GitHub" in the header keeps a copy of the project on GitHub and lets Publish put it online; do not repeat it every turn. Until then git push is not possible.';
+    return 'not connected. Once the app runs and looks right for the first time, tell the user once, in one sentence, that clicking "Back up to GitHub" in the Changes tab keeps a copy of the project on GitHub and lets Publish, in the header, put it online; do not repeat it every turn. Until then git push is not possible.';
   const parts = [
     state.repository
       ? `connected; this project backs up to ${state.repository} (origin).`

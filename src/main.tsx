@@ -6,6 +6,7 @@ import "./styles.css";
 import "./theme.css";
 import "./theme.ts";
 import "./mobile.css";
+import "./shell.css";
 
 const root = document.getElementById("root");
 if (!root) throw new Error("Missing #root");

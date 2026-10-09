@@ -1,0 +1,678 @@
+/* The app shell: projects sidebar, landing page, workspace header and the
+   preview's toolbar. Loaded last, after the Civic Spark styles it adjusts.
+   Motion follows docs/ui-standards.md. */
+
+/* Motion tokens. Use these, never literal durations. */
+:root {
+  --motion-fast: 120ms;
+  --motion-base: 200ms;
+  --motion-slow: 280ms;
+  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ease-in: cubic-bezier(0.4, 0, 1, 1);
+}
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --motion-fast: 0.01ms;
+    --motion-base: 0.01ms;
+    --motion-slow: 0.01ms;
+  }
+}
+
+/* Hover, focus and press fade rather than snap. */
+:is(
+  .button,
+  .header-icon,
+  .project-sidebar-open,
+  .project-sidebar-delete,
+  .header-menu-item,
+  .link-button,
+  .workspace-screen .workspace-header .workspace-tabs button
+) {
+  transition:
+    color var(--motion-fast) var(--ease-out),
+    background-color var(--motion-fast) var(--ease-out),
+    border-color var(--motion-fast) var(--ease-out),
+    opacity var(--motion-fast) var(--ease-out),
+    filter var(--motion-fast) var(--ease-out);
+}
+
+/* Icon buttons: settings, the sidebar toggle, preview actions. */
+.header-icon {
+  position: relative;
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--app-muted);
+}
+.header-icon:hover:not(:disabled),
+.header-icon[aria-expanded="true"]:not([aria-controls]) {
+  color: var(--app-text);
+  background: color-mix(in srgb, var(--app-text) 8%, transparent);
+}
+.icon-count {
+  position: absolute;
+  top: 3px;
+  right: 2px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--app-error-text);
+  color: var(--app-surface);
+  font-size: 10px;
+  font-weight: 650;
+  line-height: 16px;
+}
+.button[data-tone="warning"] {
+  color: var(--app-warning-text);
+  background: var(--app-warning);
+}
+
+/* Sidebar: docked on wide screens, a drawer on narrow ones. */
+.app-frame {
+  --sidebar-width: 248px;
+}
+@media (min-width: 900px) {
+  .app-frame[data-sidebar="open"] {
+    --sidebar-offset: var(--sidebar-width);
+  }
+}
+.project-sidebar {
+  position: fixed;
+  inset: 0 auto 0 0;
+  z-index: 30;
+  width: var(--sidebar-width);
+  display: flex;
+  flex-direction: column;
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+  padding-left: env(safe-area-inset-left);
+  background: var(--app-muted-surface);
+  border-right: 1px solid var(--app-border);
+  color: var(--app-text);
+  transition:
+    transform var(--motion-base) var(--ease-out),
+    box-shadow var(--motion-base) var(--ease-out),
+    visibility 0s;
+}
+/* Closed: slide out, then leave the tab order once the slide has finished. */
+.project-sidebar[data-open="false"] {
+  transform: translateX(-100%);
+  visibility: hidden;
+  transition:
+    transform var(--motion-base) var(--ease-in),
+    box-shadow var(--motion-base) var(--ease-in),
+    visibility 0s linear var(--motion-base);
+}
+.sidebar-backdrop {
+  display: none;
+}
+.project-sidebar-header {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-height: 48px;
+  padding: 0 6px 0 16px;
+}
+.project-sidebar-header h2 {
+  flex: 1;
+  font-size: 13px;
+  font-weight: 650;
+}
+.sidebar-close {
+  display: none;
+}
+.project-sidebar-list {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  list-style: none;
+  margin: 0;
+  padding: 0 8px 12px;
+}
+.project-sidebar-list li {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.project-sidebar-open {
+  flex: 1;
+  min-width: 0;
+  min-height: 34px;
+  padding: 6px 34px 6px 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--app-text);
+  font-size: 13px;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.project-sidebar-open:hover {
+  background: color-mix(in srgb, var(--app-text) 6%, transparent);
+}
+.project-sidebar-new {
+  flex: 1;
+  min-width: 0;
+  min-height: 34px;
+  padding: 6px 10px;
+  border: 1px solid var(--app-accent);
+  border-radius: 7px;
+  outline: none;
+  background: var(--app-input);
+  color: var(--app-text);
+  font-size: 13px;
+}
+/* The accent border is the focus ring; the global outline would double it. */
+.project-sidebar-new:focus-visible {
+  outline: none;
+}
+.project-sidebar-new {
+  animation: shell-rise var(--motion-base) var(--ease-out);
+}
+@keyframes shell-rise {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+.project-sidebar-new::placeholder {
+  color: var(--app-muted);
+}
+.project-sidebar-open[aria-current="page"] {
+  background: var(--app-info);
+  color: var(--app-info-text);
+  font-weight: 600;
+}
+.project-sidebar-delete {
+  position: absolute;
+  right: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--app-muted);
+  opacity: 0;
+}
+.project-sidebar-list li:hover .project-sidebar-delete,
+.project-sidebar-delete:focus-visible {
+  opacity: 1;
+}
+.project-sidebar-delete:hover {
+  color: var(--app-error-text);
+  background: var(--app-error);
+}
+@media (hover: none) {
+  .project-sidebar-delete {
+    opacity: 1;
+  }
+}
+@media (max-width: 899px) {
+  .project-sidebar {
+    width: min(300px, 85vw);
+  }
+  .project-sidebar[data-open="true"] {
+    box-shadow: 8px 0 24px rgb(0 0 0 / 0.25);
+  }
+  .sidebar-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 29;
+    border: 0;
+    background: rgb(0 0 0 / 0.5);
+    transition:
+      opacity var(--motion-base) var(--ease-out),
+      visibility 0s;
+  }
+  .sidebar-backdrop[data-open="false"] {
+    opacity: 0;
+    visibility: hidden;
+    transition:
+      opacity var(--motion-base) var(--ease-in),
+      visibility 0s linear var(--motion-base);
+  }
+  .sidebar-close {
+    display: inline-flex;
+  }
+}
+
+/* Everything beside the sidebar moves over when it is docked. */
+.app-frame .workspace-screen {
+  left: var(--sidebar-offset, 0px);
+  right: 0;
+  width: auto;
+  transition: left var(--motion-base) var(--ease-out);
+}
+/* Full screen fills the window at once, so the frame is measured at full size. */
+.app-frame .workspace-screen.preview-full {
+  left: 0;
+  z-index: 40;
+  transition: none;
+}
+.app-frame :is(.landing, .loading) {
+  margin-left: var(--sidebar-offset, 0px);
+  transition: margin-left var(--motion-base) var(--ease-out);
+}
+.loading-menu {
+  position: fixed;
+  top: max(6px, env(safe-area-inset-top));
+  left: calc(var(--sidebar-offset, 0px) + max(6px, env(safe-area-inset-left)));
+  transition: left var(--motion-base) var(--ease-out);
+}
+
+/* Landing: no project open. */
+.landing {
+  max-width: none;
+  min-height: 100dvh;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+.landing-header {
+  display: flex;
+  justify-content: space-between;
+  padding: max(6px, env(safe-area-inset-top)) max(6px, env(safe-area-inset-right)) 6px
+    max(6px, env(safe-area-inset-left));
+}
+.landing-body {
+  width: min(460px, calc(100% - 32px));
+  margin: auto;
+  padding-bottom: 12vh;
+  display: grid;
+  gap: 16px;
+  text-align: center;
+}
+.landing-body h1 {
+  font-size: 32px;
+  letter-spacing: -0.02em;
+}
+.landing-body p {
+  color: var(--app-muted);
+}
+.landing-body .project-create .button {
+  min-height: 44px;
+  padding: 0 18px;
+  font-size: 14px;
+}
+.landing-alternative {
+  font-size: 13px;
+}
+
+/* Workspace header: project, views, Publish and Settings in one row. */
+.workspace-screen .workspace-header {
+  gap: 4px;
+  min-height: 48px;
+  padding: 0 6px;
+}
+.workspace-screen .workspace-header h1 {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 240px;
+  margin: 0 12px 0 4px;
+  font-size: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.workspace-screen .workspace-header .workspace-tabs {
+  align-self: stretch;
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+.workspace-screen .workspace-header .workspace-tabs button {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 12px;
+  border-radius: 0;
+  border-bottom: 2px solid transparent;
+  font-size: 13px;
+}
+.tab-count {
+  margin-left: 6px;
+  min-width: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: var(--app-border);
+  color: var(--app-text);
+  font-size: 11px;
+  line-height: 18px;
+  text-align: center;
+}
+.workspace-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+
+/* Small menus that hang from a header button. */
+.header-menu {
+  position: relative;
+}
+.header-menu-panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 25;
+  min-width: 210px;
+  display: grid;
+  gap: 2px;
+  padding: 6px;
+  border: 1px solid var(--app-border);
+  border-radius: 10px;
+  background: var(--app-surface);
+  box-shadow: 0 12px 32px rgb(0 0 0 / 0.2);
+  transform-origin: top right;
+}
+/* Menus and popovers stay mounted and toggle hidden; these animate both ways. */
+:is(.header-menu-panel, .preview-settings) {
+  transition:
+    opacity var(--motion-fast) var(--ease-out),
+    transform var(--motion-fast) var(--ease-out),
+    display var(--motion-fast) allow-discrete;
+}
+:is(.header-menu-panel, .preview-settings)[hidden] {
+  display: none;
+  opacity: 0;
+  transform: translateY(-4px) scale(0.98);
+  transition-timing-function: var(--ease-in);
+}
+@starting-style {
+  :is(.header-menu-panel, .preview-settings):not([hidden]) {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
+  }
+}
+.header-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 36px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--app-text);
+  font-size: 13px;
+  text-align: left;
+  white-space: nowrap;
+}
+.header-menu-item:hover:not(:disabled) {
+  background: var(--app-muted-surface);
+}
+.header-menu-note {
+  padding: 6px 10px 4px;
+  border-top: 1px solid var(--app-border);
+  color: var(--app-muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.header-menu-note a,
+.backup-bar a {
+  color: inherit;
+  text-decoration: underline;
+}
+
+/* Changes: where the project is kept. */
+.backup-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--app-border);
+  color: var(--app-muted);
+  font-size: 13px;
+}
+.backup-bar[data-tone="warning"] {
+  color: var(--app-warning-text);
+  background: var(--app-warning);
+}
+.backup-bar p {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* Preview toolbar, like a browser's. */
+.workspace-screen .preview-panel {
+  padding: 0;
+}
+.preview-toolbar {
+  position: relative;
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 2px;
+  padding: 3px 6px;
+  border-bottom: 1px solid var(--app-border);
+  background: var(--app-muted-surface);
+}
+.preview-address {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  height: 30px;
+  margin: 0 4px;
+  padding: 0 12px;
+  border: 1px solid var(--app-border);
+  border-radius: 15px;
+  background: var(--app-input);
+  color: var(--app-muted);
+  font-size: 12px;
+}
+.preview-address span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.preview-address select {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: var(--app-text);
+  font: inherit;
+}
+.preview-drawer {
+  position: absolute;
+  inset: auto 0 0;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  height: 40%;
+  border-top: 1px solid var(--app-border);
+  background: var(--app-surface);
+  box-shadow: 0 -8px 24px rgb(0 0 0 / 0.12);
+  transition:
+    opacity var(--motion-base) var(--ease-out),
+    transform var(--motion-base) var(--ease-out),
+    display var(--motion-base) allow-discrete;
+}
+.preview-drawer[hidden] {
+  display: none;
+  opacity: 0;
+  transform: translateY(16px);
+  transition-timing-function: var(--ease-in);
+}
+@starting-style {
+  .preview-drawer:not([hidden]) {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+}
+.preview-drawer header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 4px 2px 12px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.preview-drawer header span {
+  flex: 1;
+}
+.preview-drawer-errors {
+  flex-shrink: 0;
+  max-height: 40%;
+  overflow: auto;
+  margin: 0;
+  padding: 6px 12px 6px 28px;
+  background: var(--app-error);
+  color: var(--app-error-text);
+  font-size: 12px;
+}
+.preview-drawer .preview-logs {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 8px 12px;
+  overflow: auto;
+  color: var(--app-text);
+  font:
+    12px / 1.5 ui-monospace,
+    monospace;
+  white-space: pre-wrap;
+}
+
+.workspace-screen.preview-full .preview-toolbar,
+.workspace-screen.preview-full .preview-drawer {
+  display: none;
+}
+
+/* Switching views fades the new one in. */
+/* Only the incoming view animates; the outgoing one leaves at once so two never share the space. */
+.workspace-screen > :is(.workspace-panel, .workspace-files, .workspace-changes-view) {
+  transition: opacity var(--motion-fast) var(--ease-out);
+}
+@starting-style {
+  .workspace-screen
+    > :is(.workspace-panel, .workspace-files, .workspace-changes-view):not([hidden]) {
+    opacity: 0;
+  }
+}
+/* Dialogs rise in over a fading backdrop. */
+dialog.modal[open] {
+  animation: shell-dialog var(--motion-slow) var(--ease-out);
+}
+dialog.modal[open]::backdrop {
+  animation: shell-fade var(--motion-slow) var(--ease-out);
+}
+@keyframes shell-dialog {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+}
+@keyframes shell-fade {
+  from {
+    opacity: 0;
+  }
+}
+.workspace-toast {
+  animation: shell-rise var(--motion-base) var(--ease-out);
+}
+
+/* Settings: what the home page used to explain. */
+.settings-about {
+  margin-top: 8px;
+  font-size: 13px;
+  color: var(--app-muted);
+}
+.settings-about summary {
+  cursor: pointer;
+  min-height: 32px;
+}
+.settings-about ul {
+  margin: 4px 0 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 4px;
+}
+
+/* Touch: 44px targets. */
+@media (max-width: 650px), (max-width: 1000px) and (max-height: 500px), (pointer: coarse) {
+  .header-icon,
+  .project-sidebar-delete {
+    width: 44px;
+    height: 44px;
+  }
+  .project-sidebar-new {
+    min-height: 44px;
+    font-size: 16px;
+  }
+  .project-sidebar-open {
+    min-height: 44px;
+    padding-right: 48px;
+  }
+  .project-sidebar-delete {
+    right: 0;
+  }
+  .header-menu-item {
+    min-height: 44px;
+  }
+  .workspace-screen .workspace-header .button {
+    min-height: 44px;
+  }
+  .preview-address {
+    height: 36px;
+  }
+  .preview-address select {
+    font-size: 16px;
+  }
+}
+/* Phones: the views move to a second row under the project name. */
+@media (max-width: 650px) {
+  .workspace-screen .workspace-header {
+    flex-wrap: wrap;
+    padding: 2px 4px 0;
+    gap: 0 4px;
+  }
+  .workspace-screen .workspace-header h1 {
+    flex: 1;
+    max-width: none;
+    margin: 0 4px;
+  }
+  .workspace-screen .workspace-header .workspace-tabs {
+    order: 10;
+    flex-basis: calc(100% + 8px);
+    margin: 0 -4px;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    border-top: 1px solid var(--app-border);
+  }
+  .workspace-screen .workspace-header .workspace-tabs button {
+    flex: 1 0 auto;
+    justify-content: center;
+    min-height: 44px;
+    padding: 0 10px;
+  }
+  .backup-bar {
+    flex-wrap: wrap;
+    padding: 8px 12px;
+  }
+  .preview-drawer {
+    height: 50%;
+  }
+}

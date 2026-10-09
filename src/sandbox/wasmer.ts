@@ -121,6 +121,10 @@ export class WasmerSandbox implements Sandbox {
   ) {}
 
   static async create(options: WasmerSandboxOptions): Promise<WasmerSandbox> {
+    if (!globalThis.isSecureContext)
+      throw new Error(
+        `The sandbox needs HTTPS or localhost. Browsers turn off the isolation it relies on for plain-http addresses like ${location.host}.`,
+      );
     if (!globalThis.crossOriginIsolated)
       throw new Error(
         "This page is not cross-origin isolated. The sandbox needs the Cross-Origin-Opener-Policy and Cross-Origin-Embedder-Policy headers.",

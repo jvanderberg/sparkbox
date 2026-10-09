@@ -1,5 +1,13 @@
 import { X } from "lucide-react";
-import { cloneElement, type ReactElement, type ReactNode, useEffect, useId, useRef } from "react";
+import {
+  cloneElement,
+  type ReactElement,
+  type ReactNode,
+  type RefObject,
+  useEffect,
+  useId,
+  useRef,
+} from "react";
 
 export function Modal({
   title,
@@ -75,4 +83,26 @@ export function initials(name: string) {
     .slice(0, 2)
     .join("")
     .toUpperCase();
+}
+/** Close a popover on a press outside `root` or on Escape. */
+export function useDismiss(
+  root: RefObject<HTMLElement | null>,
+  open: boolean,
+  onDismiss: () => void,
+) {
+  useEffect(() => {
+    if (!open) return;
+    const outside = (event: PointerEvent) => {
+      if (event.target instanceof Node && !root.current?.contains(event.target)) onDismiss();
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onDismiss();
+    };
+    document.addEventListener("pointerdown", outside);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("pointerdown", outside);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [root, open, onDismiss]);
 }

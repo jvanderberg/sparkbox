@@ -1,4 +1,4 @@
-import { ArrowDown, GitCompareArrows, Paperclip, Settings2, Trash2, X } from "lucide-react";
+import { ArrowDown, Paperclip, Settings2, Trash2, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { AgentImages, readAgentImage } from "./AgentImages.tsx";
 import { AgentTimeline } from "./AgentTimeline.tsx";
@@ -25,7 +25,6 @@ export function Agent({
   dirty,
   onUpdated,
   onOpenFile,
-  onReview,
   onWorkingChange,
 }: {
   runner: AgentRunner;
@@ -33,7 +32,6 @@ export function Agent({
   dirty: boolean;
   onUpdated: () => void;
   onOpenFile: (path: string) => void;
-  onReview: () => void;
   onWorkingChange?: (working: boolean) => void;
 }) {
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -276,9 +274,6 @@ export function Agent({
       <header className="chat-header">
         <span>Agent</span>
         <div>
-          <button type="button" onClick={onReview}>
-            <GitCompareArrows size={14} /> Review changes
-          </button>
           <button
             type="button"
             aria-label="Agent connection settings"

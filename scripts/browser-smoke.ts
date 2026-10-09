@@ -126,10 +126,16 @@ async function run(label: string, options: { mobile?: boolean; dark?: boolean })
   await page.goto(base);
   const isolated = await page.evaluate(() => globalThis.crossOriginIsolated);
   if (!isolated) throw new Error("page is not cross-origin isolated");
-  await page.getByLabel("New project name").fill(`Smoke ${label}`);
-  await page.getByRole("button", { name: "Create" }).click();
-  // On phones the status badge sits inside the collapsed menu.
-  await page.getByText("Sandbox ready").waitFor({ state: "attached", timeout: 180_000 });
+  // A first visit lands on "Create a project".
+  await page.getByLabel("Project name", { exact: true }).fill(`Smoke ${label}`);
+  await page.getByRole("button", { name: "Create a project" }).click();
+  // The workspace appears once the sandbox, the agent and git are ready; the
+  // header names the project that is open.
+  const ready = (name = `Smoke ${label}`) =>
+    page
+      .locator(".workspace-header h1", { hasText: name })
+      .waitFor({ state: "attached", timeout: 180_000 });
+  await ready();
   const exec = (command: string) =>
     page.evaluate(
       (command) =>
@@ -156,7 +162,7 @@ async function run(label: string, options: { mobile?: boolean; dark?: boolean })
   await exec("echo via-shell > shell.txt");
   await write("kept.txt", "second");
   await page.reload();
-  await page.getByText("Sandbox ready").waitFor({ state: "attached", timeout: 180_000 });
+  await ready();
   const restored = await exec("cat kept.txt shell.txt");
   if (restored.stdout !== "secondvia-shell\n")
     throw new Error(`edits were lost over a reload: ${JSON.stringify(restored)}`);
@@ -165,8 +171,10 @@ async function run(label: string, options: { mobile?: boolean; dark?: boolean })
   if (!options.mobile) {
     // Project secrets: added in Settings, they reach commands as environment
     // variables as soon as they are saved.
-    // The preview panel has its own Settings button; the workspace header's opens the app settings.
-    await page.locator("header").getByRole("button", { name: "Settings" }).first().click();
+    await page
+      .locator(".workspace-header")
+      .getByRole("button", { name: "Settings", exact: true })
+      .click();
     await page.getByRole("button", { name: "Add secret" }).click();
     await page.getByLabel("Secret 1 name").fill("SMOKE_SECRET");
     await page.getByLabel("Secret 1 value").fill("smoke-secret-value");
@@ -214,7 +222,7 @@ async function run(label: string, options: { mobile?: boolean; dark?: boolean })
   await page.screenshot({ path: `artifacts/smoke-${label}-agent.png` });
   // A new project is only PROJECT.md: the preview says so instead of serving a 404.
   await tabs.getByRole("button", { name: "Preview" }).click();
-  await page.locator(".preview-panel").getByRole("button", { name: "Preview" }).click();
+  await page.locator(".preview-panel").getByRole("button", { name: "Start preview" }).click();
   await page.getByRole("alert").filter({ hasText: "Nothing to preview yet" }).waitFor();
   console.log(`${label} empty project refuses to preview`);
   // The page an agent would have written: the rest of the smoke drives it.
@@ -242,7 +250,7 @@ button.addEventListener("click", () => {
     "package.json",
     JSON.stringify({ name: "smoke", dependencies: { "left-pad": "1.3.0" } }),
   );
-  await page.locator(".preview-panel").getByRole("button", { name: "Preview" }).click();
+  await page.locator(".preview-panel").getByRole("button", { name: "Start preview" }).click();
   await page
     .getByRole("alert")
     .filter({ hasText: "cannot be reinstalled here" })
@@ -284,7 +292,7 @@ console.log(out.join(" "));`,
     }),
   );
   await tabs.getByRole("button", { name: "Preview" }).click();
-  await page.locator(".preview-panel").getByRole("button", { name: "Preview" }).click();
+  await page.locator(".preview-panel").getByRole("button", { name: "Start preview" }).click();
   const frame = page.locator("iframe.preview-frame");
   await frame.waitFor({ timeout: 180_000 });
   const content = frame.contentFrame();
@@ -336,7 +344,8 @@ console.log(out.join(" "));`,
       throw new Error("smoke page error");
     }, 0);
   });
-  await page.getByText(/1 page error/).waitFor({ timeout: 10_000 });
+  const logs = page.getByRole("button", { name: /^Logs/ });
+  await page.getByRole("button", { name: "Logs, 1 page error" }).waitFor({ timeout: 10_000 });
   // Full-screen preview hides the chrome and fills the window; Esc exits.
   const fullScreen = page.getByRole("button", { name: "Full screen" });
   if (await fullScreen.isVisible()) {
@@ -356,7 +365,10 @@ console.log(out.join(" "));`,
     await page.getByRole("button", { name: "Exit full screen" }).waitFor({ state: "detached" });
   }
   await page.screenshot({ path: `artifacts/smoke-${label}-preview.png` });
+  await logs.click();
+  await page.getByRole("log", { name: "Preview server logs" }).waitFor();
   await page.getByRole("button", { name: "Clear page errors" }).click();
+  await page.getByRole("button", { name: "Close logs" }).click();
   // Live reload: a file written through the sandbox shows up in the frame on its own.
   await page.evaluate(
     ([title]) =>
@@ -427,16 +439,14 @@ console.log(out.join(" "));`,
   if (tool.width !== 390 || tool.height !== 844 || tool.bytes < 2000)
     throw new Error(`screenshot is wrong: ${JSON.stringify(tool)}`);
   // The probe frames must not have added errors to the user's preview view.
-  if (await page.locator(".preview-page-errors").count())
+  if ((await logs.getAttribute("aria-label")) !== "Logs")
     throw new Error("probe frames leaked page errors into the panel");
   const running = await exec("node probe.mjs 3999 8080");
   if (running.stdout.trim() !== "3999=busy 8080=busy")
     throw new Error(`preview servers are not listening: ${JSON.stringify(running)}`);
-  // On phones the preview controls live in the workspace menu.
-  const menu = page.getByRole("button", { name: "Workspace controls" });
-  if (await menu.isVisible()) await menu.click();
-  await page.getByRole("button", { name: "Stop preview" }).click();
-  if (await menu.isVisible()) await page.keyboard.press("Escape");
+  // The preview's server actions sit in its toolbar's menu.
+  await page.getByRole("button", { name: "More preview actions" }).click();
+  await page.getByRole("button", { name: "Stop server" }).click();
   const stoppedAt = Date.now();
   let freed = "";
   while (Date.now() - stoppedAt < 60_000) {
@@ -459,10 +469,8 @@ console.log(out.join(" "));`,
     .waitFor({ timeout: 20_000 });
   // Back up: one click creates the repository, commits everything and pushes
   // (through the git relay to the local git server); Changes is then clean.
-  if (await menu.isVisible()) await menu.click();
   await page.getByRole("button", { name: "Back up to GitHub" }).click();
   await page.getByText(/Backed up to https:\/\/github\.com\/ada\//).waitFor({ timeout: 60_000 });
-  if (await menu.isVisible()) await page.keyboard.press("Escape");
   await page.getByText("No changes since the last commit.").waitFor({ timeout: 20_000 });
   const repoName = github.state.repos[0] ?? "";
   if (!repoName) throw new Error("no repository was created");
@@ -501,11 +509,11 @@ console.log(out.join(" "));`,
     throw new Error("the agent's push did not reach the remote");
   console.log(`${label} git works from the sandbox`);
   // Publish: a static project gets Pages from the main branch and a .nojekyll.
-  if (await menu.isVisible()) await menu.click();
   await page.getByRole("button", { name: "Publish", exact: true }).click();
-  await page.getByRole("link", { name: "Open site" }).waitFor({ timeout: 60_000 });
   await page.getByText(/Published: https:\/\/ada\.github\.io\//).waitFor({ timeout: 60_000 });
-  if (await menu.isVisible()) await page.keyboard.press("Escape");
+  // Once published, the button opens a menu with the site and Republish.
+  await page.locator(".workspace-header .header-menu > button").click();
+  await page.getByRole("link", { name: "Open site" }).waitFor();
   if (github.state.pages?.build_type !== "legacy")
     throw new Error(
       `pages were not enabled from the branch: ${JSON.stringify(github.state.pages)}`,
@@ -520,11 +528,11 @@ console.log(out.join(" "));`,
   await page.screenshot({ path: `artifacts/smoke-${label}-published.png` });
   console.log(`${label} published at a Pages URL`);
   if (!options.mobile) {
-    // Open from GitHub clones the repository into a new project.
-    await page.getByRole("button", { name: "← Projects" }).click();
+    await page.keyboard.press("Escape");
+    // Open from GitHub, in the projects sidebar, clones the repository into a new project.
     await page.getByRole("button", { name: "Open from GitHub" }).click();
     await page.getByRole("button", { name: new RegExp(`^${repoName}`) }).click();
-    await page.getByText("Sandbox ready").waitFor({ state: "attached", timeout: 180_000 });
+    await ready(repoName);
     const cloned = await exec("cat index.html && git log --oneline -n 1");
     if (
       !cloned.stdout.includes(`Smoke ${label}`) ||
@@ -532,9 +540,11 @@ console.log(out.join(" "));`,
     )
       throw new Error(`the clone is not the repository: ${JSON.stringify(cloned)}`);
     console.log(`${label} opened the repository from GitHub`);
-    await page.getByRole("button", { name: "← Projects" }).click();
-    await page.getByRole("button", { name: `Smoke ${label}`, exact: true }).click();
-    await page.getByText("Sandbox ready").waitFor({ state: "attached", timeout: 180_000 });
+    await page
+      .getByRole("navigation", { name: "Projects" })
+      .getByRole("button", { name: `Smoke ${label}`, exact: true })
+      .click();
+    await ready();
   }
   if (!options.mobile) {
     // A reloaded page must be able to expose the preview again. The preview
@@ -542,9 +552,9 @@ console.log(out.join(" "));`,
     // old page registered; it has to notice that owner is gone rather than
     // refuse with "already exposes another guest server".
     await page.reload();
-    await page.getByText("Sandbox ready").waitFor({ state: "attached", timeout: 180_000 });
+    await ready();
     await tabs.getByRole("button", { name: "Preview" }).click();
-    await page.locator(".preview-panel").getByRole("button", { name: "Preview" }).click();
+    await page.locator(".preview-panel").getByRole("button", { name: "Start preview" }).click();
     const alert = page.locator(".preview-error");
     await Promise.race([
       frame.waitFor({ timeout: 180_000 }),

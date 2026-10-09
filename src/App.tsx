@@ -1,4 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { X } from "lucide-react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { completeOpenRouterLogin } from "./agent/openrouter-auth.ts";
 import type { PreviewController } from "./agent/preview-controller.ts";
 import { AgentRunner } from "./agent/runner.ts";
@@ -16,8 +18,10 @@ import type { Repository } from "./github/api.ts";
 import { completeGitHubLogin } from "./github/auth.ts";
 import { createGitHubController } from "./github/controller.ts";
 import { cloneUrl } from "./github/sync.ts";
+import { Landing } from "./Landing.tsx";
 import { Loading } from "./Loading.tsx";
 import { defaultPreviewOrigin, previewPort, usePreview } from "./Preview.tsx";
+import { drawerQuery, type Project, ProjectSidebar, SidebarToggle } from "./ProjectSidebar.tsx";
 import { queryPreview } from "./preview-bridge.ts";
 import {
   deleteSnapshot,
@@ -27,11 +31,10 @@ import {
   saveSnapshotNow,
 } from "./sandbox/storage.ts";
 import { type SandboxProgress, WasmerSandbox } from "./sandbox/wasmer.ts";
+import { useToast } from "./Toast.tsx";
 import { starterTemplate } from "./template.ts";
 import { Workspace } from "./Workspace.tsx";
 import "./app.css";
-
-type Project = { id: string; name: string };
 
 const projectsKey = "sparkbox:projects";
 
@@ -50,28 +53,58 @@ function projectId(name: string) {
   return `${name
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-|-$/g, "")}-${crypto.randomUUID().slice(0, 6)}`;
+    .replace(/^-|-$/g, "")}-${suffix()}`;
+}
+/** Six hex digits. Not randomUUID, which browsers withhold from plain-http pages. */
+function suffix() {
+  return [...crypto.getRandomValues(new Uint8Array(3))]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+/** A name that is not taken yet: "Untitled project", then "Untitled project 2". */
+function untitled(projects: Project[]) {
+  const taken = new Set(projects.map((project) => project.name));
+  let name = "Untitled project";
+  for (let n = 2; taken.has(name); n++) name = `Untitled project ${n}`;
+  return name;
+}
+
+const lastProjectKey = "sparkbox:last-project";
+const sidebarKey = "sparkbox:sidebar";
+
+/** Sessions still shutting down, so a delete or a reopen can wait for their last save. */
+const closing = new Map<string, Promise<unknown>>();
+
+/** The project in the address, else the one open last, else the newest. */
+function initialProject(): Project | null {
+  const projects = loadProjects();
+  const id =
+    new URLSearchParams(location.hash.slice(1)).get("project") ??
+    localStorage.getItem(lastProjectKey);
+  return projects.find((project) => project.id === id) ?? projects.at(-1) ?? null;
 }
 
 export function App() {
   const [projects, setProjects] = useState<Project[]>(loadProjects);
-  const [open, setOpen] = useState<Project | null>(() => {
-    const id = new URLSearchParams(location.hash.slice(1)).get("project");
-    return loadProjects().find((project) => project.id === id) ?? null;
-  });
-  const [notice, setNotice] = useState("");
+  const [open, setOpen] = useState<Project | null>(initialProject);
+  const { notify, toast } = useToast();
+  const [sidebarOpen, setSidebarOpen] = useState(
+    () => !window.matchMedia(drawerQuery).matches && localStorage.getItem(sidebarKey) !== "closed",
+  );
+  // Unsaved editor text in the open project; leaving it asks first.
+  const dirty = useRef(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [wisp, setWisp] = useState(settings.wispUrl());
   const [previewOrigin, setPreviewOrigin] = useState(
     settings.previewOrigin() || defaultPreviewOrigin(),
   );
-  const [newName, setNewName] = useState("");
   const [host, setHost] = useState<HostConfig | null>(null);
   useEffect(() => {
     void hostConfig().then(setHost);
   }, []);
   const account = useGitHubAccount();
-  const [connecting, setConnecting] = useState(false);
+  // Connecting GitHub on its own, or as the first step of opening a repository.
+  const [connecting, setConnecting] = useState<null | "connect" | "open">(null);
   const [opening, setOpening] = useState(false);
   // The open project's repository link, re-read when Settings opens.
   const [link, setLink] = useState(() => (open ? settings.githubLink(open.id) : null));
@@ -103,10 +136,10 @@ export function App() {
         if (key) {
           settings.setKey("openrouter", key);
           settings.setProvider("openrouter");
-          setNotice("OpenRouter is connected.");
+          notify("OpenRouter is connected.");
         }
       })
-      .catch((error: Error) => setNotice(error.message));
+      .catch((error: Error) => notify(error.message, "error"));
     // GitHub sends the user back here with a code to exchange: in the popup
     // (which stores the token for the opening tab and closes) or in this tab.
     void completeGitHubLogin()
@@ -116,16 +149,16 @@ export function App() {
         if (result.popup) {
           window.close();
           // Still here: the browser would not close the window for us.
-          setNotice(`GitHub is connected as ${login}. You can close this window.`);
+          notify(`GitHub is connected as ${login}. You can close this window.`);
           return;
         }
-        setNotice(`GitHub is connected as ${login}.`);
+        notify(`GitHub is connected as ${login}.`);
         const id = new URLSearchParams(location.hash.slice(1)).get("project");
         const project = loadProjects().find((entry) => entry.id === id);
         if (project) setOpen(project);
       })
-      .catch((error: Error) => setNotice(error.message));
-  }, []);
+      .catch((error: Error) => notify(error.message, "error"));
+  }, [notify]);
 
   useEffect(() => {
     // Recover projects whose files exist but whose name entry was lost.
@@ -142,31 +175,89 @@ export function App() {
 
   useEffect(() => {
     location.hash = open ? `project=${encodeURIComponent(open.id)}` : "";
+    if (open) localStorage.setItem(lastProjectKey, open.id);
   }, [open]);
 
-  function createProject() {
-    const name = newName.trim();
-    if (!name) return;
-    const id = projectId(name);
-    const next = [...projects, { id, name }];
-    setProjects(next);
-    storeProjects(next);
-    setNewName("");
-    setSecrets(settings.secrets(id));
-    setOpen({ id, name });
+  function toggleSidebar() {
+    const next = !sidebarOpen;
+    setSidebarOpen(next);
+    if (!window.matchMedia(drawerQuery).matches)
+      localStorage.setItem(sidebarKey, next ? "open" : "closed");
+  }
+  /** The drawer gets out of the way once the user has picked something. */
+  function closeDrawer() {
+    if (window.matchMedia(drawerQuery).matches) setSidebarOpen(false);
+  }
+
+  /** Switch to another project, or to the landing page. False when the user kept their edits. */
+  function show(project: Project | null) {
+    closeDrawer();
+    if (project?.id === open?.id) return true;
+    if (dirty.current && !window.confirm("Discard unsaved edits in the open file?")) return false;
+    dirty.current = false;
+    if (project) setSecrets(settings.secrets(project.id));
+    setOpen(project);
+    return true;
+  }
+
+  function addProject(project: Project) {
+    setProjects((current) => {
+      const next = [...current, project];
+      storeProjects(next);
+      return next;
+    });
+  }
+
+  function createProject(input: string) {
+    if (dirty.current && !window.confirm("Discard unsaved edits in the open file?")) return;
+    dirty.current = false;
+    const name = input || untitled(projects);
+    const project = { id: projectId(name), name };
+    addProject(project);
+    show(project);
+  }
+
+  async function deleteProject(project: Project) {
+    if (!window.confirm(`Delete ${project.name} and its files from this browser?`)) return;
+    if (open?.id === project.id) {
+      dirty.current = false;
+      localStorage.removeItem(lastProjectKey);
+      // Unmount now, so the session's closing save is registered before the files go.
+      flushSync(() => setOpen(null));
+      await new Promise((resolve) => setTimeout(resolve));
+    }
+    await closing.get(project.id)?.catch(() => {});
+    await Promise.all([
+      deleteSnapshot(project.id),
+      deleteSnapshot(`${project.id}#baseline`),
+      deleteSnapshot(`${project.id}#git`),
+    ]).catch((error: Error) => notify(`Could not delete every file: ${error.message}`, "error"));
+    settings.setGithubLink(project.id, null);
+    settings.setPendingClone(project.id, null);
+    setProjects((current) => {
+      const next = current.filter((entry) => entry.id !== project.id);
+      storeProjects(next);
+      return next;
+    });
   }
 
   /** A repository becomes a project that clones it on first open and keeps backing up to it. */
   async function openRepository(repo: Repository) {
+    if (dirty.current && !window.confirm("Discard unsaved edits in the open file?")) return;
+    dirty.current = false;
     const id = projectId(repo.name);
     settings.setPendingClone(id, cloneUrl(repo));
     settings.setGithubLink(id, { ...repo, auto: true, pushedAt: new Date().toISOString() });
-    const next = [...projects, { id, name: repo.name }];
-    setProjects(next);
-    storeProjects(next);
+    const project = { id, name: repo.name };
+    addProject(project);
     setOpening(false);
-    setSecrets(settings.secrets(id));
-    setOpen({ id, name: repo.name });
+    show(project);
+  }
+
+  function openFromGitHub() {
+    closeDrawer();
+    if (account) setOpening(true);
+    else setConnecting("open");
   }
 
   const githubModals = (
@@ -174,12 +265,18 @@ export function App() {
       {connecting && (
         <GitHubConnect
           clientId={host?.githubClientId ?? ""}
-          reason="Projects live only in this browser, where storage can be cleared without warning. GitHub keeps a copy of each one and can publish it as a website."
+          reason={
+            connecting === "open"
+              ? "Sign in to GitHub to choose one of your repositories."
+              : "Projects live only in this browser, where storage can be cleared without warning. GitHub keeps a copy of each one and can publish it as a website."
+          }
           onConnected={(login) => {
-            setConnecting(false);
-            setNotice(`GitHub is connected as ${login}.`);
+            const then = connecting;
+            setConnecting(null);
+            notify(`GitHub is connected as ${login}.`);
+            if (then === "open") setOpening(true);
           }}
-          onClose={() => setConnecting(false)}
+          onClose={() => setConnecting(null)}
         />
       )}
       {opening && (
@@ -187,7 +284,7 @@ export function App() {
           onOpen={openRepository}
           onConnect={() => {
             setOpening(false);
-            setConnecting(true);
+            setConnecting("open");
           }}
           onClose={() => setOpening(false)}
         />
@@ -223,7 +320,7 @@ export function App() {
           settings.setWispUrl(wisp);
           settings.setPreviewOrigin(previewOrigin);
           setSettingsOpen(false);
-          setNotice(
+          notify(
             open
               ? "Settings saved. Secrets apply to new commands now; the preview origin and relay apply the next time a project is opened."
               : "Settings saved. They apply the next time a project is opened.",
@@ -265,11 +362,12 @@ export function App() {
                 />
                 <button
                   type="button"
-                  className="button small"
+                  className="header-icon"
                   aria-label={`Remove secret ${index + 1}`}
+                  title="Remove secret"
                   onClick={() => setSecretRows((rows) => rows.filter((_, i) => i !== index))}
                 >
-                  Remove
+                  <X size={16} aria-hidden="true" />
                 </button>
               </div>
             ))}
@@ -299,20 +397,37 @@ export function App() {
                 className="link-button"
                 onClick={() => {
                   githubAccount.disconnect();
-                  setNotice("GitHub is disconnected from this browser.");
+                  notify("GitHub is disconnected from this browser.");
                 }}
               >
                 Sign out
               </button>
             </p>
           ) : (
-            <p className="muted">
-              Not connected.{" "}
-              <button type="button" className="link-button" onClick={() => setConnecting(true)}>
-                Connect GitHub
-              </button>{" "}
-              to back up and publish projects.
-            </p>
+            <>
+              <p className="muted">
+                Projects live only in this browser, and browsers clear storage without warning.
+                GitHub keeps a copy of every project and publishes any of them as a website. A free
+                account is enough.
+              </p>
+              <div className="button-row">
+                <button
+                  type="button"
+                  className="button primary"
+                  onClick={() => setConnecting("connect")}
+                >
+                  Connect GitHub
+                </button>
+                <a
+                  className="button"
+                  href="https://github.com/signup"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Create an account
+                </a>
+              </div>
+            </>
           )}
           {open && link && (
             <>
@@ -379,6 +494,22 @@ export function App() {
           Optional. Without a relay the sandbox has no internet access, so package installs do not
           work. Model requests go straight from this page to the provider either way.
         </p>
+        <details className="settings-about">
+          <summary>How Sparkbox works</summary>
+          <ul>
+            <li>
+              Your files live in this browser. Nothing is kept on a Sparkbox server; there is none.
+            </li>
+            <li>
+              Add an API key for Claude, OpenAI or OpenRouter in the Agent panel. Keys stay in this
+              browser.
+            </li>
+            <li>
+              The agent runs commands in a WebAssembly sandbox on this page. Preview serves the
+              project from it.
+            </li>
+          </ul>
+        </details>
         <div className="form-actions">
           <button type="submit" className="button primary">
             Save
@@ -388,164 +519,62 @@ export function App() {
     </Modal>
   );
 
-  if (open)
-    return (
-      <>
+  const menu = <SidebarToggle open={sidebarOpen} onToggle={toggleSidebar} />;
+  return (
+    <div className="app-frame" data-sidebar={sidebarOpen ? "open" : "closed"}>
+      <ProjectSidebar
+        projects={projects}
+        current={open?.id ?? null}
+        open={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
+        onOpen={show}
+        onCreate={createProject}
+        onDelete={(project) => void deleteProject(project)}
+        onOpenFromGitHub={openFromGitHub}
+      />
+      {open ? (
         <ProjectSession
           key={open.id}
           project={open}
           secrets={secrets}
           host={host}
-          onClose={() => setOpen(null)}
+          menu={menu}
+          onClose={() => show(null)}
           onSettings={() => setSettingsOpen(true)}
-        />
-        {settingsModal}
-        {githubModals}
-      </>
-    );
-
-  return (
-    <main className="home">
-      <header className="home-header">
-        <div>
-          <h1>Sparkbox</h1>
-          <p>An AI coding agent, a Linux sandbox and a live preview, all in your browser.</p>
-        </div>
-        <button type="button" className="button" onClick={() => setSettingsOpen(true)}>
-          Settings
-        </button>
-      </header>
-      {notice && (
-        <p className="home-notice" role="status">
-          {notice}
-        </p>
-      )}
-      <section className="home-card">
-        <h2>Projects</h2>
-        {projects.length === 0 && <p className="muted">No projects yet.</p>}
-        <ul className="project-list">
-          {projects.map((project) => (
-            <li key={project.id}>
-              <button
-                type="button"
-                className="project-open"
-                onClick={() => {
-                  setSecrets(settings.secrets(project.id));
-                  setOpen(project);
-                }}
-              >
-                {project.name}
-              </button>
-              <button
-                type="button"
-                className="button small"
-                aria-label={`Delete ${project.name}`}
-                onClick={() => {
-                  if (!window.confirm(`Delete ${project.name} and its files from this browser?`))
-                    return;
-                  const next = projects.filter((entry) => entry.id !== project.id);
-                  setProjects(next);
-                  storeProjects(next);
-                  void deleteSnapshot(project.id);
-                  void deleteSnapshot(`${project.id}#baseline`);
-                  void deleteSnapshot(`${project.id}#git`);
-                  settings.setGithubLink(project.id, null);
-                  settings.setPendingClone(project.id, null);
-                }}
-              >
-                Delete
-              </button>
-            </li>
-          ))}
-        </ul>
-        <form
-          className="project-create"
-          onSubmit={(event) => {
-            event.preventDefault();
-            createProject();
+          onDirtyChange={(value) => {
+            dirty.current = value;
           }}
-        >
-          <input
-            aria-label="New project name"
-            placeholder="New project name"
-            value={newName}
-            onChange={(event) => setNewName(event.target.value)}
-          />
-          <button type="submit" className="button primary" disabled={!newName.trim()}>
-            Create
-          </button>
-        </form>
-      </section>
-      <section className="home-card github-card">
-        <h2>Back up and publish</h2>
-        {account ? (
-          <>
-            <p>
-              GitHub is connected as <strong>{account.login}</strong>. Each project has a Back up
-              button that pushes it to a repository, and Publish puts it online with GitHub Pages.
-            </p>
-            <div className="button-row">
-              <button type="button" className="button" onClick={() => setOpening(true)}>
-                Open from GitHub
-              </button>
-            </div>
-          </>
-        ) : (
-          <>
-            <p>
-              Projects live only in this browser, and browsers clear storage without warning.
-              Connect a GitHub account to keep a copy of every project and to publish any of them as
-              a website in one click. A free account is enough.
-            </p>
-            <div className="button-row">
-              <button type="button" className="button primary" onClick={() => setConnecting(true)}>
-                Connect GitHub
-              </button>
-              <a
-                className="button"
-                href="https://github.com/signup"
-                target="_blank"
-                rel="noreferrer"
-              >
-                Create a GitHub account
-              </a>
-            </div>
-          </>
-        )}
-      </section>
-      <section className="home-card">
-        <h2>How it works</h2>
-        <ul className="home-list">
-          <li>
-            Your files live in this browser. Nothing is sent to a Sparkbox server; there is none.
-          </li>
-          <li>
-            Add an API key for Claude, OpenAI or OpenRouter in the Agent panel. Keys stay in this
-            browser.
-          </li>
-          <li>
-            The agent runs commands in a WebAssembly sandbox on this page. Preview serves the
-            project from it.
-          </li>
-        </ul>
-      </section>
+        />
+      ) : (
+        <Landing
+          menu={menu}
+          onSettings={() => setSettingsOpen(true)}
+          onCreate={createProject}
+          onOpenFromGitHub={openFromGitHub}
+        />
+      )}
       {settingsModal}
       {githubModals}
-    </main>
+      {toast}
+    </div>
   );
 }
 
 function ProjectSession({
   project,
   host,
+  menu,
   onClose,
   onSettings,
+  onDirtyChange,
   secrets,
 }: {
   project: Project;
   host: HostConfig | null;
+  menu: ReactNode;
   onClose: () => void;
   onSettings: () => void;
+  onDirtyChange: (dirty: boolean) => void;
   secrets: Record<string, string>;
 }) {
   const [sandbox, setSandbox] = useState<WasmerSandbox | null>(null);
@@ -619,15 +648,17 @@ function ProjectSession({
     let bridge: { stop: () => Promise<void> } | null = null;
     // The git objects are persisted whenever they changed; cheap when they did not.
     const persistGit = () => {
-      if (!store?.dirty) return;
+      if (!store?.dirty) return Promise.resolve();
       store.dirty = false;
-      void saveGitStore(project.id, store.toRecord()).catch((error) =>
+      return saveGitStore(project.id, store.toRecord()).catch((error) =>
         console.warn("git store save failed", error),
       );
     };
     const gitTimer = setInterval(persistGit, 1500);
-    relay
-      .then((url) => {
+    // A session of this project that was just closed may still be saving.
+    const previous = closing.get(project.id) ?? Promise.resolve();
+    Promise.all([relay, previous])
+      .then(([url]) => {
         wispUrl = url;
         return WasmerSandbox.create({
           workspace: project.id,
@@ -716,16 +747,27 @@ function ProjectSession({
     return () => {
       active = false;
       clearInterval(gitTimer);
-      persistGit();
       window.removeEventListener("pagehide", persist);
       document.removeEventListener("visibilitychange", hidden);
       void bridge?.stop();
-      void created?.close();
+      const saved = Promise.all([persistGit(), created?.close()]);
+      closing.set(project.id, saved);
+      void saved.finally(() => {
+        if (closing.get(project.id) === saved) closing.delete(project.id);
+      });
     };
   }, [project.id, project.name, controller, host]);
 
   if (!sandbox || !runner || !git)
-    return <Loading title={project.name} progress={progress} error={error} onBack={onClose} />;
+    return (
+      <Loading
+        title={project.name}
+        menu={menu}
+        progress={progress}
+        error={error}
+        onBack={onClose}
+      />
+    );
 
   return (
     <Workspace
@@ -735,8 +777,9 @@ function ProjectSession({
       preview={preview}
       git={git}
       githubClientId={host?.githubClientId ?? ""}
-      onClose={onClose}
+      menu={menu}
       onSettings={onSettings}
+      onDirtyChange={onDirtyChange}
     />
   );
 }

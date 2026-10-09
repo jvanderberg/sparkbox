@@ -1,5 +1,5 @@
-import { Download, FilePlus2, RefreshCw, Save, Trash2, Upload } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Download, FilePlus2, RefreshCw, Save, Settings, Trash2, Upload } from "lucide-react";
+import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { Agent } from "./Agent.tsx";
 import type { AgentRunner } from "./agent/runner.ts";
 import { settings } from "./agent/settings.ts";
@@ -7,12 +7,11 @@ import { Changes } from "./Changes.tsx";
 import { CodeEditor } from "./CodeEditor.tsx";
 import { Badge } from "./components.tsx";
 import { FileExplorer } from "./FileExplorer.tsx";
-import { GitHubControls } from "./GitHubControls.tsx";
+import { BackupBar, PublishButton } from "./GitHubControls.tsx";
 import type { Repository as Git } from "./git/repo.ts";
 import { useGitHubAccount } from "./github/account.ts";
 import { NeedsAccount, useGitHubProject } from "./github/use-github-project.ts";
-import { MobileMenu } from "./MobileMenu.tsx";
-import { PreviewControls, PreviewPanel, type usePreview } from "./Preview.tsx";
+import { PreviewPanel, type usePreview } from "./Preview.tsx";
 import type { WasmerSandbox } from "./sandbox/wasmer.ts";
 import { useWorkspaceViewport } from "./use-workspace-viewport.ts";
 import { FILE_LIMIT, type Changes as WorkspaceChanges } from "./workspace/types.ts";
@@ -40,8 +39,9 @@ export function Workspace({
   preview,
   git,
   githubClientId,
-  onClose,
+  menu,
   onSettings,
+  onDirtyChange,
 }: {
   name: string;
   sandbox: WasmerSandbox;
@@ -51,8 +51,11 @@ export function Workspace({
   git: Git;
   /** The host's GitHub OAuth app, or empty when the user pastes a token. */
   githubClientId: string;
-  onClose: () => void;
+  /** The projects sidebar toggle. */
+  menu: ReactNode;
   onSettings: () => void;
+  /** Unsaved editor text, so switching projects can ask first. */
+  onDirtyChange: (dirty: boolean) => void;
 }) {
   const workspace = sandbox.workspace;
   const [view, setView] = useState<WorkspaceView>(() => {
@@ -240,6 +243,11 @@ export function Workspace({
   }, [sandbox, readFile, refreshFiles]);
 
   useEffect(() => {
+    onDirtyChange(dirty);
+    return () => onDirtyChange(false);
+  }, [dirty, onDirtyChange]);
+
+  useEffect(() => {
     const listener = (event: BeforeUnloadEvent) => {
       if (dirty) event.preventDefault();
     };
@@ -282,55 +290,43 @@ export function Workspace({
       className={`workspace-screen${previewFull && view === "preview" ? " preview-full" : ""}`}
     >
       <header className="workspace-header">
-        <h1>{name}</h1>
-        <MobileMenu label="Workspace controls">
-          <button
-            type="button"
-            className="button small"
-            onClick={() => {
-              if (!dirty || window.confirm("Discard unsaved edits and close?")) onClose();
-            }}
-          >
-            ← Projects
-          </button>
-          <span className="workspace-privacy">Runs in this browser</span>
-          <Badge tone="green">Sandbox ready</Badge>
-          <PreviewControls
-            preview={preview}
-            disabled={busy}
-            onShow={() => setView("preview")}
-            onFullScreen={() => {
-              setView("preview");
-              setPreviewFull(true);
-            }}
-          />
-          <GitHubControls
+        {menu}
+        <h1 title={name}>{name}</h1>
+        <nav className="workspace-tabs" aria-label="Workspace views">
+          {(
+            [
+              ["agent", "Agent"],
+              ["preview", "Preview"],
+              ["files", "Files"],
+              ["changes", "Changes"],
+            ] as const
+          ).map(([id, label]) => (
+            <button type="button" key={id} aria-pressed={view === id} onClick={() => setView(id)}>
+              {label}
+              {id === "changes" && changes?.files.length ? (
+                <span className="tab-count">{changes.files.length}</span>
+              ) : null}
+            </button>
+          ))}
+        </nav>
+        <div className="workspace-header-actions">
+          <PublishButton
             github={github}
             clientId={githubClientId}
             disabled={busy || dirty}
-            changed={changes?.files.length ?? 0}
             onError={(text) => report(text, true)}
           />
-          <button type="button" className="button small" onClick={onSettings}>
-            Settings
+          <button
+            type="button"
+            className="header-icon"
+            aria-label="Settings"
+            title="Settings"
+            onClick={onSettings}
+          >
+            <Settings size={18} aria-hidden="true" />
           </button>
-        </MobileMenu>
+        </div>
       </header>
-      <nav className="workspace-tabs" aria-label="Workspace views">
-        {(
-          [
-            ["agent", "Agent"],
-            ["preview", "Preview"],
-            ["files", "Files"],
-            ["changes", "Changes"],
-          ] as const
-        ).map(([id, label]) => (
-          <button type="button" key={id} aria-pressed={view === id} onClick={() => setView(id)}>
-            {label}
-            {id === "changes" && changes?.files.length ? ` (${changes.files.length})` : ""}
-          </button>
-        ))}
-      </nav>
       <section
         className="workspace-changes-view"
         aria-label="Changes view"
@@ -338,6 +334,12 @@ export function Workspace({
         tabIndex={0}
         hidden={view !== "changes"}
       >
+        <BackupBar
+          github={github}
+          clientId={githubClientId}
+          disabled={busy || dirty}
+          onError={(text) => report(text, true)}
+        />
         <Changes
           value={changes}
           refresh={() => void refreshFiles()}
@@ -359,7 +361,6 @@ export function Workspace({
         dirty={dirty}
         onWorkingChange={setAgentWorking}
         onUpdated={() => void refreshFiles()}
-        onReview={() => setView("changes")}
         onOpenFile={(path) => {
           setView("files");
           void open(path);
@@ -368,7 +369,9 @@ export function Workspace({
       <PreviewPanel
         preview={preview}
         visible={view === "preview"}
+        disabled={busy}
         full={previewFull && view === "preview"}
+        onFullScreen={() => setPreviewFull(true)}
         onExitFullScreen={() => setPreviewFull(false)}
       />
       <div className="workspace-files" hidden={view !== "files"}>
