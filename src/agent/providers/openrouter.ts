@@ -4,6 +4,14 @@ import type {
   ChatCompletionTool,
 } from "openai/resources/chat/completions";
 import {
+  estimateTokens,
+  excerpt,
+  splitOldestTurns,
+  summaryAcknowledgement,
+  summaryInstructions,
+  summaryMessage,
+} from "../compaction.ts";
+import {
   genericTools,
   pageTools,
   runGenericTool,
@@ -28,6 +36,7 @@ export class OpenRouterSession implements ProviderSession {
   readonly provider: ProviderId;
   private client: OpenAI;
   private messages: ChatCompletionMessageParam[] = [];
+  private lastPromptTokens: number | null = null;
   /**
    * `baseURL` defaults to OpenRouter. The Sparkbox free agent points it at
    * the host's proxy, which holds the real key and fixes the model.
@@ -49,12 +58,62 @@ export class OpenRouterSession implements ProviderSession {
 
   reset() {
     this.messages = [];
+    this.lastPromptTokens = null;
   }
   export() {
     return this.messages;
   }
   import(state: unknown) {
     this.messages = Array.isArray(state) ? (state as ChatCompletionMessageParam[]) : [];
+    this.lastPromptTokens = null;
+  }
+
+  promptTokens() {
+    if (this.lastPromptTokens !== null) return this.lastPromptTokens;
+    let images = 0;
+    const text = JSON.stringify(this.messages, (key, value: unknown) => {
+      if (key === "image_url" && value && typeof value === "object") {
+        images++;
+        return undefined;
+      }
+      return value;
+    });
+    return estimateTokens(text, images);
+  }
+
+  async compact(fraction: number, signal?: AbortSignal) {
+    const split = splitOldestTurns(
+      this.messages,
+      (message) => message.role === "user" && !isSummary(message),
+      fraction,
+    );
+    if (!split) return null;
+    const transcript = split.folded.map(renderForSummary).filter(Boolean).join("\n\n");
+    let summary: string;
+    try {
+      const completion = await this.client.chat.completions.create(
+        {
+          model: this.model,
+          messages: [
+            { role: "system", content: summaryInstructions },
+            { role: "user", content: transcript },
+          ],
+          max_tokens: 1500,
+        },
+        { signal },
+      );
+      summary = completion.choices[0]?.message.content ?? "";
+    } catch (error) {
+      throw describeFailure(error);
+    }
+    if (!summary.trim()) throw new Error("The model returned an empty summary.");
+    this.messages = [
+      { role: "user", content: summaryMessage(summary) },
+      { role: "assistant", content: summaryAcknowledgement },
+      ...split.kept,
+    ];
+    this.lastPromptTokens = null;
+    return { turns: split.turns };
   }
 
   async run(prompt: Prompt, context: TurnContext) {
@@ -79,11 +138,13 @@ export class OpenRouterSession implements ProviderSession {
             messages: [{ role: "system", content: context.system }, ...this.messages],
             tools,
             stream: true,
+            stream_options: { include_usage: true },
           },
           { signal: context.signal },
         );
         stream.on("content", (delta) => context.sink.text(textId, delta));
         const completion = await stream.finalChatCompletion();
+        if (completion.usage?.prompt_tokens) this.lastPromptTokens = completion.usage.prompt_tokens;
         const choice = completion.choices[0];
         if (!choice) throw new Error("The provider returned no choices.");
         assistant = choice.message;
@@ -169,4 +230,37 @@ export class OpenRouterSession implements ProviderSession {
       }
     }
   }
+}
+
+function isSummary(message: ChatCompletionMessageParam) {
+  return (
+    typeof message.content === "string" && message.content.startsWith("[Earlier in this session")
+  );
+}
+
+/** One message as text for the summarizer: images and long outputs trimmed. */
+function renderForSummary(message: ChatCompletionMessageParam): string {
+  if (message.role === "user") {
+    const text =
+      typeof message.content === "string"
+        ? message.content
+        : (message.content ?? [])
+            .map((part) => (part.type === "text" ? part.text : "[image]"))
+            .join("\n");
+    return `User: ${excerpt(text, 3000)}`;
+  }
+  if (message.role === "assistant") {
+    const parts: string[] = [];
+    if (typeof message.content === "string" && message.content) parts.push(message.content);
+    for (const call of message.tool_calls ?? [])
+      if (call.type === "function")
+        parts.push(`[tool ${call.function.name}(${excerpt(call.function.arguments, 400)})]`);
+    return parts.length ? `Agent: ${excerpt(parts.join("\n"), 3000)}` : "";
+  }
+  if (message.role === "tool") {
+    const text =
+      typeof message.content === "string" ? message.content : JSON.stringify(message.content);
+    return `Tool result: ${excerpt(text, 1200)}`;
+  }
+  return "";
 }

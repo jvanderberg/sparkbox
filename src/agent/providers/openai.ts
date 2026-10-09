@@ -1,6 +1,14 @@
 import OpenAI from "openai";
 import type { ResponseInputItem, Tool } from "openai/resources/responses/responses";
 import {
+  estimateTokens,
+  excerpt,
+  splitOldestTurns,
+  summaryAcknowledgement,
+  summaryInstructions,
+  summaryMessage,
+} from "../compaction.ts";
+import {
   applyPatchOperation,
   pageTools,
   runPageTool,
@@ -29,6 +37,7 @@ export class OpenAISession implements ProviderSession {
   readonly provider = "openai" as const;
   private client: OpenAI;
   private items: ResponseInputItem[] = [];
+  private lastPromptTokens: number | null = null;
   constructor(
     apiKey: string,
     readonly model: string,
@@ -38,12 +47,57 @@ export class OpenAISession implements ProviderSession {
 
   reset() {
     this.items = [];
+    this.lastPromptTokens = null;
   }
   export() {
     return this.items;
   }
   import(state: unknown) {
     this.items = Array.isArray(state) ? (state as ResponseInputItem[]) : [];
+    this.lastPromptTokens = null;
+  }
+
+  promptTokens() {
+    if (this.lastPromptTokens !== null) return this.lastPromptTokens;
+    let images = 0;
+    const text = JSON.stringify(this.items, (key, value: unknown) => {
+      if (key === "image_url" && typeof value === "string") {
+        images++;
+        return undefined;
+      }
+      return value;
+    });
+    return estimateTokens(text, images);
+  }
+
+  async compact(fraction: number, signal?: AbortSignal) {
+    const split = splitOldestTurns(this.items, isUserPrompt, fraction);
+    if (!split) return null;
+    const transcript = split.folded.map(renderForSummary).filter(Boolean).join("\n\n");
+    let summary: string;
+    try {
+      const response = await this.client.responses.create(
+        {
+          model: this.model,
+          instructions: summaryInstructions,
+          input: transcript,
+          store: false,
+          max_output_tokens: 1500,
+        },
+        { signal },
+      );
+      summary = response.output_text;
+    } catch (error) {
+      throw describeFailure(error);
+    }
+    if (!summary.trim()) throw new Error("The model returned an empty summary.");
+    this.items = [
+      { role: "user", content: [{ type: "input_text", text: summaryMessage(summary) }] },
+      { role: "assistant", content: summaryAcknowledgement },
+      ...split.kept,
+    ];
+    this.lastPromptTokens = null;
+    return { turns: split.turns };
   }
 
   async run(prompt: Prompt, context: TurnContext) {
@@ -76,6 +130,7 @@ export class OpenAISession implements ProviderSession {
         );
         stream.on("response.output_text.delta", (event) => context.sink.text(textId, event.delta));
         response = await stream.finalResponse();
+        if (response.usage?.input_tokens) this.lastPromptTokens = response.usage.input_tokens;
       } catch (error) {
         throw describeFailure(error);
       }
@@ -216,4 +271,38 @@ export class OpenAISession implements ProviderSession {
       this.items.push(...calls);
     }
   }
+}
+
+/** A real user prompt, not a tool output item or a compaction summary. */
+function isUserPrompt(item: ResponseInputItem) {
+  if (!("role" in item) || item.role !== "user") return false;
+  const content = item.content;
+  if (typeof content === "string") return !content.startsWith("[Earlier in this session");
+  const first = content[0];
+  return !(first?.type === "input_text" && first.text.startsWith("[Earlier in this session"));
+}
+
+/** One item as text for the summarizer: images and long outputs trimmed. */
+function renderForSummary(item: ResponseInputItem): string {
+  if ("role" in item && (item.role === "user" || item.role === "assistant")) {
+    const content = item.content;
+    const text =
+      typeof content === "string"
+        ? content
+        : content
+            .map((part) =>
+              part.type === "input_text" || part.type === "output_text" ? part.text : "[image]",
+            )
+            .join("\n");
+    return text ? `${item.role === "user" ? "User" : "Agent"}: ${excerpt(text, 3000)}` : "";
+  }
+  if (!("type" in item)) return "";
+  if (item.type === "shell_call")
+    return `[tool shell(${excerpt(item.action.commands.join("\n"), 400)})]`;
+  if (item.type === "function_call") return `[tool ${item.name}(${excerpt(item.arguments, 400)})]`;
+  if (item.type === "shell_call_output")
+    return `Tool result: ${excerpt(item.output.map((entry) => `${entry.stdout}${entry.stderr}`).join("\n"), 1200)}`;
+  if (item.type === "function_call_output")
+    return `Tool result: ${excerpt(typeof item.output === "string" ? item.output : JSON.stringify(item.output), 1200)}`;
+  return "";
 }

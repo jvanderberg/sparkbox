@@ -89,6 +89,13 @@ export interface ProviderSession {
   /** Exported transcript for persistence. */
   export(): unknown;
   import(state: unknown): void;
+  /** Prompt tokens the provider reported for the last request, or an estimate. */
+  promptTokens(): number;
+  /**
+   * Fold the oldest `fraction` of turns into a model-written summary. Null
+   * when there are too few turns to fold.
+   */
+  compact(fraction: number, signal?: AbortSignal): Promise<{ turns: number } | null>;
 }
 
 export type SessionFactory = (options: { apiKey: string; model: string }) => ProviderSession;

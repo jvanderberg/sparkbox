@@ -1,4 +1,12 @@
 import Anthropic from "@anthropic-ai/sdk";
+import {
+  estimateTokens,
+  excerpt,
+  splitOldestTurns,
+  summaryAcknowledgement,
+  summaryInstructions,
+  summaryMessage,
+} from "../compaction.ts";
 import { pageTools, runPageTool, runShell, textEditor } from "../tools.ts";
 import { describeFailure, type Prompt, type ProviderSession, type TurnContext } from "./types.ts";
 
@@ -19,6 +27,7 @@ export class AnthropicSession implements ProviderSession {
   readonly provider = "anthropic" as const;
   private client: Anthropic;
   private messages: Anthropic.Messages.MessageParam[] = [];
+  private lastPromptTokens: number | null = null;
   constructor(
     apiKey: string,
     readonly model: string,
@@ -28,12 +37,56 @@ export class AnthropicSession implements ProviderSession {
 
   reset() {
     this.messages = [];
+    this.lastPromptTokens = null;
   }
   export() {
     return this.messages;
   }
   import(state: unknown) {
     this.messages = Array.isArray(state) ? (state as Anthropic.Messages.MessageParam[]) : [];
+    this.lastPromptTokens = null;
+  }
+
+  promptTokens() {
+    if (this.lastPromptTokens !== null) return this.lastPromptTokens;
+    let images = 0;
+    const text = JSON.stringify(this.messages, (key, value: unknown) => {
+      if (key === "source" && value && typeof value === "object" && "data" in value) {
+        images++;
+        return undefined;
+      }
+      return value;
+    });
+    return estimateTokens(text, images);
+  }
+
+  async compact(fraction: number, signal?: AbortSignal) {
+    const split = splitOldestTurns(this.messages, isUserPrompt, fraction);
+    if (!split) return null;
+    const transcript = split.folded.map(renderForSummary).filter(Boolean).join("\n\n");
+    let summary = "";
+    try {
+      const message = await this.client.messages.create(
+        {
+          model: this.model,
+          max_tokens: 1500,
+          system: summaryInstructions,
+          messages: [{ role: "user", content: transcript }],
+        },
+        { signal },
+      );
+      for (const block of message.content) if (block.type === "text") summary += block.text;
+    } catch (error) {
+      throw describeFailure(error);
+    }
+    if (!summary.trim()) throw new Error("The model returned an empty summary.");
+    this.messages = [
+      { role: "user", content: [{ type: "text", text: summaryMessage(summary) }] },
+      { role: "assistant", content: [{ type: "text", text: summaryAcknowledgement }] },
+      ...split.kept,
+    ];
+    this.lastPromptTokens = null;
+    return { turns: split.turns };
   }
 
   async run(prompt: Prompt, context: TurnContext) {
@@ -64,6 +117,10 @@ export class AnthropicSession implements ProviderSession {
         );
         stream.on("text", (delta) => context.sink.text(textId, delta));
         message = await stream.finalMessage();
+        this.lastPromptTokens =
+          message.usage.input_tokens +
+          (message.usage.cache_read_input_tokens ?? 0) +
+          (message.usage.cache_creation_input_tokens ?? 0);
       } catch (error) {
         // A failed request leaves the user turn in history so a retry resends it.
         throw describeFailure(error);
@@ -151,4 +208,40 @@ export class AnthropicSession implements ProviderSession {
       this.messages.push({ role: "user", content: results });
     }
   }
+}
+
+/** A real user prompt (text or images), not a tool-result message or a compaction summary. */
+function isUserPrompt(message: Anthropic.Messages.MessageParam) {
+  if (message.role !== "user") return false;
+  if (typeof message.content === "string")
+    return !message.content.startsWith("[Earlier in this session");
+  if (message.content.some((block) => block.type === "tool_result")) return false;
+  const first = message.content[0];
+  return !(first?.type === "text" && first.text.startsWith("[Earlier in this session"));
+}
+
+/** One message as text for the summarizer: images and long outputs trimmed. */
+function renderForSummary(message: Anthropic.Messages.MessageParam): string {
+  const blocks: Anthropic.Messages.ContentBlockParam[] =
+    typeof message.content === "string"
+      ? [{ type: "text", text: message.content }]
+      : message.content;
+  const parts: string[] = [];
+  for (const block of blocks) {
+    if (block.type === "text") parts.push(block.text);
+    else if (block.type === "image") parts.push("[image]");
+    else if (block.type === "tool_use")
+      parts.push(`[tool ${block.name}(${excerpt(JSON.stringify(block.input), 400)})]`);
+    else if (block.type === "tool_result") {
+      const text =
+        typeof block.content === "string"
+          ? block.content
+          : (block.content ?? [])
+              .map((part) => (part.type === "text" ? part.text : "[image]"))
+              .join("\n");
+      parts.push(`Tool result: ${excerpt(text, 1200)}`);
+    }
+  }
+  if (!parts.length) return "";
+  return `${message.role === "user" ? "User" : "Agent"}: ${excerpt(parts.join("\n"), 3000)}`;
 }

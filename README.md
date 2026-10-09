@@ -29,6 +29,8 @@ Besides each provider's native file and shell tools, the agent gets two tools th
 
 Keys are stored only in this browser and are sent only to that provider. All three providers accept browser requests directly, so no proxy is involved. Usage is billed to the user's own account.
 
+Conversations are kept whole until they pass the **Agent context limit** in Settings (default 80,000 prompt tokens; 0 turns it off). Past it, the oldest half of the turns is folded into a summary the model writes, oldest first, and the chat shows a status line saying so. The check runs before and after each turn using the prompt size the provider reported (or an estimate after a reload), for every provider. Models get slower and pricier as the prompt grows; the free agent's rate steps up past 100,000 tokens.
+
 ## Project secrets
 
 API keys and tokens the app itself needs (a transit API key, say) go under Settings → Secrets while a project is open, not into the chat. They stay in this browser's localStorage, become environment variables in every command and in the preview server (so Vite exposes `VITE_`-prefixed ones to the page), can be written as `${NAME}` in download tool URLs, and are redacted to `[NAME]` in every tool output the model sees. The agent is told the names only.

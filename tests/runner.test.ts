@@ -12,6 +12,8 @@ function fakeSession(behavior: "ok" | "hang" | "fail"): ProviderSession {
     reset() {},
     export: () => [],
     import() {},
+    promptTokens: () => 0,
+    compact: async () => null,
     async run(prompt, context: TurnContext) {
       if (behavior === "fail") throw Object.assign(new Error("Unauthorized"), { status: 401 });
       context.sink.text("t1", `You said ${prompt.text}. `);

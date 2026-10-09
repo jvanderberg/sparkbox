@@ -75,6 +75,14 @@ export const settings = {
     const entries = Object.entries(value).filter(([name, secret]) => name && secret);
     write(`secrets:${project}`, entries.length ? JSON.stringify(Object.fromEntries(entries)) : "");
   },
+  /** Prompt-token limit before the oldest half of a conversation is summarized; 0 turns it off. */
+  contextLimit(): number {
+    const value = Number(read("context-limit"));
+    return Number.isFinite(value) && read("context-limit") !== "" ? Math.max(0, value) : 80_000;
+  },
+  setContextLimit(value: number) {
+    write("context-limit", Number.isFinite(value) ? String(Math.max(0, Math.floor(value))) : "");
+  },
   /** The GitHub token from Sign in with GitHub or a pasted token. Goes only to api.github.com. */
   githubToken() {
     return read("github-token");

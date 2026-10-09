@@ -4,6 +4,7 @@ import type { AgentEvent, QueuedPrompt } from "../agents/protocol.ts";
 import { agentQueueLimit } from "../agents/protocol.ts";
 import { kv } from "../sandbox/storage.ts";
 import type { Sandbox } from "../sandbox/types.ts";
+import { compactionNotice } from "./compaction.ts";
 import type { GitHubController, GitHubState } from "./github-controller.ts";
 import type { PreviewController } from "./preview-controller.ts";
 import { AnthropicSession } from "./providers/anthropic.ts";
@@ -213,6 +214,7 @@ export class AgentRunner {
     let outcome: "success" | "failed" | "stopped" = "success";
     try {
       const session = this.session(provider);
+      await this.compactIfNeeded(session, controller.signal);
       const files = await this.options.sandbox.listFiles();
       const brief = files.includes("PROJECT.md")
         ? await this.options.sandbox.readText("PROJECT.md").catch(() => undefined)
@@ -251,6 +253,7 @@ export class AgentRunner {
         },
       );
       if (controller.signal.aborted) outcome = "stopped";
+      else await this.compactIfNeeded(session, controller.signal);
       void this.persistSession(provider, session);
     } catch (error) {
       if (controller.signal.aborted) outcome = "stopped";
@@ -316,6 +319,36 @@ export class AgentRunner {
       this.saveTimer = null;
       void kv.set("transcripts", this.options.workspace, this.events.slice(-400));
     }, 500);
+  }
+
+  /**
+   * Fold the oldest half of the conversation into a summary when the last
+   * prompt went over the limit from Settings. Runs before a turn (so a
+   * lowered limit applies at once) and after it (so the stored session and
+   * the next prompt are already small). A failed compaction is reported and
+   * the turn goes on with the full history.
+   */
+  private async compactIfNeeded(session: ProviderSession, signal: AbortSignal) {
+    const limit = settings.contextLimit();
+    if (!limit) return;
+    const promptTokens = session.promptTokens();
+    if (promptTokens <= limit) return;
+    try {
+      const result = await session.compact(0.5, signal);
+      if (result)
+        this.emit({
+          type: "status",
+          id: crypto.randomUUID(),
+          text: compactionNotice({ ...result, promptTokens }, limit),
+        });
+    } catch (error) {
+      if (signal.aborted) return;
+      this.emit({
+        type: "status",
+        id: crypto.randomUUID(),
+        text: `Could not compact the conversation: ${error instanceof Error ? error.message : String(error)}`,
+      });
+    }
   }
 
   private async persistSession(provider: ProviderId, session: ProviderSession) {
