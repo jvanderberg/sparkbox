@@ -1,5 +1,6 @@
 import type { Process } from "@wasmer/sdk/browser";
 import {
+  Ellipsis,
   Maximize2,
   Minimize2,
   Play,
@@ -8,8 +9,10 @@ import {
   ScrollText,
   Settings2,
   Square,
+  X,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useDismiss } from "./components.tsx";
 import { EsbuildService } from "./preview/esbuild-service.ts";
 import {
   defaultPreviewConfig,
@@ -98,6 +101,8 @@ export function usePreview(sandbox: WasmerSandbox | null, origin: string) {
   const [logs, setLogs] = useState("");
   const [error, setError] = useState("");
   const [ports, setPorts] = useState<number[]>([]);
+  // The sandbox port the frame shows.
+  const [shown, setShown] = useState<number | null>(null);
   const [pageErrors, setPageErrors] = useState<string[]>([]);
   const [config, setConfig] = useState<PreviewConfig>(defaultPreviewConfig);
   const pageErrorsRef = useRef<string[]>([]);
@@ -153,6 +158,7 @@ export function usePreview(sandbox: WasmerSandbox | null, origin: string) {
       routes.current.clear();
       pageIds.current.clear();
       setUrl("");
+      setShown(null);
       setRunning(false);
       setPorts([]);
       setError("The sandbox runtime restarted. Start the preview again.");
@@ -302,6 +308,7 @@ export function usePreview(sandbox: WasmerSandbox | null, origin: string) {
       closeServer.current = server.close;
       setUrl(server.url);
       urlRef.current = server.url;
+      setShown(port);
       setError("");
       return server.url;
     } catch (cause) {
@@ -455,6 +462,7 @@ export function usePreview(sandbox: WasmerSandbox | null, origin: string) {
     await pipe?.kill().catch(() => {});
     setUrl("");
     urlRef.current = "";
+    setShown(null);
     // A termination signal lets the supervisor clean up its children; the
     // sandbox forces the kill if it does not exit in time.
     if (current) await current.terminate({ gracePeriodMs: 5000 }).catch(() => {});
@@ -496,6 +504,7 @@ export function usePreview(sandbox: WasmerSandbox | null, origin: string) {
     logs,
     error,
     ports,
+    port: shown,
     config,
     pageErrors,
     /** Stable accessors for the agent's tools. */
@@ -517,87 +526,183 @@ export function usePreview(sandbox: WasmerSandbox | null, origin: string) {
   };
 }
 
-export function PreviewControls({
+/**
+ * The preview: a toolbar like a browser's (reload, the port, logs, server
+ * actions, full screen) over the app's frame. Its controls live here rather
+ * than in the workspace header, because they mean nothing anywhere else.
+ */
+export function PreviewPanel({
   preview,
-  disabled,
-  onShow,
+  visible,
+  disabled = false,
+  full = false,
   onFullScreen,
+  onExitFullScreen,
 }: {
   preview: ReturnType<typeof usePreview>;
-  disabled: boolean;
-  /** Called when a preview is started or exposed, so the panel can be shown. */
-  onShow: () => void;
-  /** Fill the window with the preview panel. */
-  onFullScreen: () => void;
+  visible: boolean;
+  disabled?: boolean;
+  full?: boolean;
+  onFullScreen?: () => void;
+  onExitFullScreen?: () => void;
 }) {
   const [logsOpen, setLogsOpen] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsVersion, setSettingsVersion] = useState(0);
+  const more = useRef<HTMLDivElement>(null);
+  const closeMore = useCallback(() => setMoreOpen(false), []);
+  useDismiss(more, moreOpen, closeMore);
+  const settingsRoot = useRef<HTMLFormElement>(null);
+  const closeSettings = useCallback(() => setSettingsOpen(false), []);
+  useDismiss(settingsRoot, settingsOpen, closeSettings);
+  const errors = preview.pageErrors.length;
+  const errorLabel = errors === 1 ? "1 page error" : `${errors} page errors`;
+  const status = preview.installing
+    ? "Installing dependencies…"
+    : preview.starting
+      ? "Starting…"
+      : preview.url
+        ? `Port ${preview.port ?? preview.config.port}`
+        : preview.running
+          ? "Waiting for the server…"
+          : "Stopped";
+  // Ports a server listens on that the frame is not showing.
+  const others = preview.ports.filter((port) => port !== preview.port);
   return (
-    <div className="preview-controls">
-      {preview.running ? (
+    <section className="workspace-panel preview-panel" aria-label="Preview" hidden={!visible}>
+      {full && (
         <button
           type="button"
-          className="button small"
-          onClick={() => void preview.stop()}
-          disabled={disabled}
+          className="preview-exit-full"
+          onClick={onExitFullScreen}
+          aria-label="Exit full screen"
+          title="Exit full screen (Esc)"
         >
-          <Square size={14} /> Stop preview
-        </button>
-      ) : (
-        <button
-          type="button"
-          className="button small primary"
-          onClick={() => {
-            onShow();
-            void preview.start().catch(() => {});
-          }}
-          disabled={disabled || preview.starting}
-        >
-          <Play size={14} />{" "}
-          {preview.installing ? "Installing…" : preview.starting ? "Starting…" : "Preview"}
+          <Minimize2 size={16} /> Exit full screen
         </button>
       )}
-      {preview.url && (
-        // Not a link to a new tab: the preview exists only through a service
-        // worker registered inside a third-party frame, and browsers that
-        // partition storage by top-level site (Safari, Chrome with third-party
-        // blocking) would serve the app page there instead.
-        <button type="button" className="button small" onClick={onFullScreen}>
-          <Maximize2 size={14} /> Full screen
-        </button>
-      )}
-      {preview.url && (
+      <div className="preview-toolbar" role="toolbar" aria-label="Preview controls">
         <button
           type="button"
-          className="button small"
-          onClick={preview.reload}
+          className="header-icon"
+          aria-label="Reload the page"
           title="Reload the page"
+          disabled={!preview.url}
+          onClick={preview.reload}
         >
-          <RefreshCw size={14} /> Reload
+          <RefreshCw size={16} aria-hidden="true" />
         </button>
-      )}
-      {preview.running && (
+        <div className="preview-address">
+          {preview.url && others.length > 0 ? (
+            <select
+              aria-label="Port shown in the preview"
+              value={preview.port ?? ""}
+              onChange={(event) => void preview.expose(Number(event.target.value)).catch(() => {})}
+            >
+              {[...new Set([preview.port ?? preview.config.port, ...others])].map((port) => (
+                <option key={port} value={port}>
+                  Port {port}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <span role="status">{status}</span>
+          )}
+        </div>
         <button
           type="button"
-          className="button small"
-          onClick={() => void preview.restart().catch(() => {})}
-          title="Restart the preview server"
+          className="header-icon"
+          aria-label={errors ? `Logs, ${errorLabel}` : "Logs"}
+          title={errors ? `Server logs and ${errorLabel}` : "Server logs"}
+          aria-expanded={logsOpen}
+          onClick={() => setLogsOpen(!logsOpen)}
         >
-          <RotateCcw size={14} /> Restart
+          <ScrollText size={16} aria-hidden="true" />
+          {errors > 0 && <span className="icon-count">{errors}</span>}
         </button>
-      )}
-      <button
-        type="button"
-        className="button small"
-        aria-expanded={settingsOpen}
-        onClick={() => setSettingsOpen(!settingsOpen)}
-        title="Preview command, port and directory"
-      >
-        <Settings2 size={14} /> Server
-      </button>
-      {settingsOpen && (
+        <div className="header-menu" ref={more}>
+          <button
+            type="button"
+            className="header-icon"
+            aria-label="More preview actions"
+            title="More"
+            aria-expanded={moreOpen}
+            aria-haspopup="true"
+            onClick={() => setMoreOpen(!moreOpen)}
+          >
+            <Ellipsis size={18} aria-hidden="true" />
+          </button>
+          <div className="header-menu-panel" hidden={!moreOpen}>
+            {preview.running && (
+              <>
+                <button
+                  type="button"
+                  className="header-menu-item"
+                  disabled={disabled}
+                  onClick={() => {
+                    closeMore();
+                    void preview.restart().catch(() => {});
+                  }}
+                >
+                  <RotateCcw size={15} aria-hidden="true" /> Restart server
+                </button>
+                <button
+                  type="button"
+                  className="header-menu-item"
+                  disabled={disabled}
+                  onClick={() => {
+                    closeMore();
+                    void preview.stop();
+                  }}
+                >
+                  <Square size={15} aria-hidden="true" /> Stop server
+                </button>
+              </>
+            )}
+            {!preview.url &&
+              others.map((port) => (
+                <button
+                  key={port}
+                  type="button"
+                  className="header-menu-item"
+                  onClick={() => {
+                    closeMore();
+                    void preview.expose(port).catch(() => {});
+                  }}
+                >
+                  <Play size={15} aria-hidden="true" /> Show port {port}
+                </button>
+              ))}
+            <button
+              type="button"
+              className="header-menu-item"
+              onClick={() => {
+                closeMore();
+                // A fresh form each time, so it shows the saved settings.
+                setSettingsVersion((version) => version + 1);
+                setSettingsOpen(true);
+              }}
+            >
+              <Settings2 size={15} aria-hidden="true" /> Server settings
+            </button>
+          </div>
+        </div>
+        <button
+          type="button"
+          className="header-icon"
+          aria-label="Full screen"
+          title="Full screen"
+          disabled={!preview.url}
+          onClick={onFullScreen}
+        >
+          <Maximize2 size={16} aria-hidden="true" />
+        </button>
         <form
+          key={settingsVersion}
+          ref={settingsRoot}
           className="preview-settings"
+          hidden={!settingsOpen}
           aria-label="Preview server settings"
           onSubmit={(event) => {
             event.preventDefault();
@@ -608,7 +713,7 @@ export function PreviewControls({
                 port: Number(form.get("port") ?? previewPort) || previewPort,
                 directory: String(form.get("directory") ?? "."),
               })
-              .then(() => setSettingsOpen(false))
+              .then(closeSettings)
               .catch(() => {});
           }}
         >
@@ -635,85 +740,20 @@ export function PreviewControls({
             with live reload; a Vite project uses its dev server, for example
             <code> npm run dev -- --host 0.0.0.0 --port 5173</code> with port 5173.
           </p>
-          <button type="submit" className="button small primary">
-            Save and restart
-          </button>
+          <div className="button-row">
+            <button type="submit" className="button small primary">
+              Save and restart
+            </button>
+            <button type="button" className="button small" onClick={closeSettings}>
+              Cancel
+            </button>
+          </div>
         </form>
-      )}
-      {preview.ports
-        .filter((port) => port !== preview.config.port || !preview.url)
-        .map((port) => (
-          <button
-            key={port}
-            type="button"
-            className="button small"
-            onClick={() => {
-              onShow();
-              void preview.expose(port).catch(() => {});
-            }}
-          >
-            Show port {port}
-          </button>
-        ))}
-      <button
-        type="button"
-        className="button small"
-        aria-expanded={logsOpen}
-        onClick={() => setLogsOpen(!logsOpen)}
-      >
-        <ScrollText size={14} /> Logs
-      </button>
-      {logsOpen && (
-        <pre className="preview-logs" role="log" aria-label="Preview server logs">
-          {preview.logs || "No output yet."}
-          {preview.pageErrors.length > 0 && `\n\nPage errors:\n${preview.pageErrors.join("\n")}`}
-        </pre>
-      )}
-    </div>
-  );
-}
-
-export function PreviewPanel({
-  preview,
-  visible,
-  full = false,
-  onExitFullScreen,
-}: {
-  preview: ReturnType<typeof usePreview>;
-  visible: boolean;
-  full?: boolean;
-  onExitFullScreen?: () => void;
-}) {
-  return (
-    <section className="workspace-panel preview-panel" aria-label="Preview" hidden={!visible}>
-      {full && (
-        <button
-          type="button"
-          className="preview-exit-full"
-          onClick={onExitFullScreen}
-          aria-label="Exit full screen"
-          title="Exit full screen (Esc)"
-        >
-          <Minimize2 size={16} /> Exit full screen
-        </button>
-      )}
+      </div>
       {preview.error && (
         <p className="preview-error" role="alert">
           {preview.error}
         </p>
-      )}
-      {preview.pageErrors.length > 0 && (
-        <div className="preview-page-errors" role="status">
-          <span>
-            {preview.pageErrors.length === 1
-              ? "1 page error"
-              : `${preview.pageErrors.length} page errors`}
-            : {preview.pageErrors[preview.pageErrors.length - 1]}
-          </span>
-          <button type="button" onClick={preview.clearPageErrors} aria-label="Clear page errors">
-            Clear
-          </button>
-        </div>
       )}
       {preview.url ? (
         <iframe
@@ -737,13 +777,48 @@ export function PreviewPanel({
             type="button"
             className="button primary"
             onClick={() => void preview.start().catch(() => {})}
-            disabled={preview.starting || preview.running}
+            disabled={disabled || preview.starting || preview.running}
           >
             <Play size={14} />{" "}
-            {preview.installing ? "Installing…" : preview.starting ? "Starting…" : "Preview"}
+            {preview.installing ? "Installing…" : preview.starting ? "Starting…" : "Start preview"}
           </button>
         </div>
       )}
+      <section className="preview-drawer" aria-label="Preview logs" hidden={!logsOpen}>
+        <header>
+          <span>Logs</span>
+          {errors > 0 && (
+            <button
+              type="button"
+              className="button small"
+              onClick={preview.clearPageErrors}
+              aria-label="Clear page errors"
+            >
+              Clear errors
+            </button>
+          )}
+          <button
+            type="button"
+            className="header-icon"
+            aria-label="Close logs"
+            title="Close"
+            onClick={() => setLogsOpen(false)}
+          >
+            <X size={16} aria-hidden="true" />
+          </button>
+        </header>
+        {errors > 0 && (
+          <ul className="preview-drawer-errors" role="status">
+            {preview.pageErrors.map((error, index) => (
+              // biome-ignore lint/suspicious/noArrayIndexKey: The same error can repeat.
+              <li key={index}>{error}</li>
+            ))}
+          </ul>
+        )}
+        <pre className="preview-logs" role="log" aria-label="Preview server logs">
+          {preview.logs || "No output yet."}
+        </pre>
+      </section>
     </section>
   );
 }

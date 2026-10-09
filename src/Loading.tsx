@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import type { SandboxProgress } from "./sandbox/wasmer.ts";
 import "./loading.css";
 
@@ -17,11 +17,14 @@ function megabytes(bytes: number) {
 /** Full-screen progress while the sandbox boots. */
 export function Loading({
   title,
+  menu,
   progress,
   error,
   onBack,
 }: {
   title: string;
+  /** The sidebar toggle. */
+  menu?: ReactNode;
   progress: SandboxProgress;
   error?: string;
   onBack: () => void;
@@ -53,6 +56,7 @@ export function Loading({
         : "";
   return (
     <main className="loading" aria-busy={!error}>
+      {menu && <div className="loading-menu">{menu}</div>}
       <section className="loading-card" role={error ? "alert" : "status"} aria-live="polite">
         <p className="loading-kicker">Opening</p>
         <h1>{title}</h1>
@@ -92,7 +96,7 @@ export function Loading({
             <p className="loading-error">{error}</p>
             <div className="form-actions">
               <button type="button" className="button" onClick={onBack}>
-                Back to projects
+                Close project
               </button>
             </div>
           </>

@@ -34,15 +34,6 @@
   color: var(--app-muted);
   font-size: 12px;
 }
-:root .changes-refresh {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 4px 7px;
-  font-size: 12px;
-  background: transparent;
-  border-color: transparent;
-}
 .changes-commit {
   max-width: 780px;
 }

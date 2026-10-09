@@ -9,6 +9,7 @@ Sparkbox is a zero-server, browser-only derivative of Civic Spark. Keep its UI a
 - **Use each provider's native coding tools.** Anthropic: `bash_20250124` and `text_editor_20250728`. OpenAI: `shell` and `apply_patch` on the Responses API. OpenRouter: the generic function tools. Do not invent provider-specific prompts that fight the tool schemas.
 - Keep the agent chat faithful to the copied T3 Code UI. Do not add original chat UX, decorative icons, or per-turn completion/cost rows. Preserve upstream attribution in `src/vendor/t3code/README.md`.
 - The runner emits the Civic Spark agent event stream (`user`, `status`, `state`, `text`, `tool`, `done`, `error`) so the timeline and tests carry over. Text deltas share an id and append; tool events share an id and replace.
+- Follow `docs/ui-standards.md` for UI: every change on screen animates subtly with the shared motion tokens (no sharp show/hide), icon buttons for secondary actions, controls next to what they control.
 - Follow the system light/dark theme throughout. Work panels fit the viewport and scroll internally.
 - Mobile is a required interface. Verify at phone widths and a short viewport in both themes. Keep 44px touch targets and 16px inputs. The full sandbox may not fit on phones; report that honestly instead of hiding it.
 - No silent overwrites of unsaved edits. The editor compares file revisions before saving.

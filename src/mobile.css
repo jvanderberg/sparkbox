@@ -31,16 +31,6 @@ body:has(.workspace-screen) {
   padding-left: env(safe-area-inset-left);
   padding-right: env(safe-area-inset-right);
 }
-.mobile-menu,
-.mobile-menu-content {
-  display: contents;
-}
-.mobile-menu-toggle {
-  display: none;
-}
-.workspace-header .mobile-menu-content > button:first-child {
-  order: -1;
-}
 .app-shell {
   padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom)
     env(safe-area-inset-left);
@@ -99,46 +89,6 @@ body:has(.workspace-screen) {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-  }
-  .mobile-menu {
-    display: block;
-  }
-  .mobile-menu-toggle {
-    display: inline-flex;
-    min-height: 44px;
-    align-items: center;
-    justify-content: center;
-    gap: 6px;
-  }
-  .mobile-menu-content {
-    display: none;
-    position: absolute;
-    z-index: 20;
-    left: 8px;
-    right: 8px;
-    top: 100%;
-    max-height: 70cqh;
-    overflow: auto;
-    overscroll-behavior: contain;
-    padding: 12px;
-    background: var(--app-surface);
-    border: 1px solid var(--app-border);
-    border-radius: 8px;
-    box-shadow: 0 8px 24px #0003;
-  }
-  .mobile-menu[data-open="true"] > .mobile-menu-content {
-    display: flex;
-    flex-direction: column;
-    align-items: stretch;
-    gap: 12px;
-  }
-  .workspace-header .mobile-menu-content > button:first-child {
-    order: initial;
-  }
-  .workspace-header .mobile-menu-content :is(.environment-popover, .team-updates-menu) {
-    position: static;
-    width: 100%;
-    max-height: 45cqh;
   }
   .workspace-header > .badge {
     font-size: 9px;

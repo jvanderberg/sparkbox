@@ -62,13 +62,13 @@ export function Changes({
           </span>
           <button
             type="button"
-            className="button small changes-refresh"
+            className="header-icon"
             onClick={refresh}
             disabled={busy}
             aria-label="Refresh changes"
+            title="Refresh changes"
           >
-            <RefreshCw size={13} aria-hidden="true" />
-            Refresh
+            <RefreshCw size={15} aria-hidden="true" />
           </button>
         </div>
         <form
