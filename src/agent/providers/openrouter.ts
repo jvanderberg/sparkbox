@@ -138,10 +138,9 @@ export class OpenRouterSession implements ProviderSession {
             { role: "system", content: summaryInstructions(words) },
             { role: "user", content: transcript },
           ],
-          // Room for the words plus slack; reasoning is off because a model
-          // that thinks first can spend the whole budget before writing.
-          max_tokens: Math.ceil(words * 3) + 500,
-          ...({ reasoning: { enabled: false } } as object),
+          // Room for the words, plus headroom for a model that reasons before
+          // it writes (those tokens count against the same cap).
+          max_tokens: Math.ceil(words * 3) + 3000,
         },
         { signal },
       );

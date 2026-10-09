@@ -146,8 +146,7 @@ export class OpenAISession implements ProviderSession {
           input: transcript,
           store: false,
           // Reasoning tokens count against this budget on reasoning models.
-          max_output_tokens: Math.ceil(words * 3) + 2000,
-          reasoning: { effort: "low" },
+          max_output_tokens: Math.ceil(words * 3) + 4000,
         },
         { signal },
       );
