@@ -7,6 +7,8 @@ primary_region = "ord"
   PORT = "8080"
   SPARKBOX_PREVIEW_PORT = "8081"
   SPARKBOX_PUBLIC_ORIGIN = "https://sparkbox.fly.dev"
+  # Prompt tokens past which conversations are compacted; 0 turns it off.
+  SPARKBOX_CONTEXT_LIMIT = "80000"
 
 # The app and its API on the standard ports.
 [[services]]

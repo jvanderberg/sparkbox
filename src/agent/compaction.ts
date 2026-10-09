@@ -53,5 +53,5 @@ export function estimateTokens(text: string, images: number) {
 export type Compaction = { turns: number; promptTokens: number };
 
 export function compactionNotice(result: Compaction, limit: number) {
-  return `Compacted the oldest ${result.turns} ${result.turns === 1 ? "turn" : "turns"} into a summary: the last prompt was about ${result.promptTokens.toLocaleString()} tokens, over the ${limit.toLocaleString()}-token limit set in Settings.`;
+  return `Compacted the oldest ${result.turns} ${result.turns === 1 ? "turn" : "turns"} into a summary: the last prompt was about ${result.promptTokens.toLocaleString()} tokens, over this deployment's ${limit.toLocaleString()}-token limit.`;
 }

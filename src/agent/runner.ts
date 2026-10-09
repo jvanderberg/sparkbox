@@ -47,6 +47,8 @@ export type RunnerOptions = {
   previewErrors?: () => string[];
   /** The preview tool's backend. */
   preview?: PreviewController;
+  /** Prompt tokens past which the oldest half of the conversation is summarized; 0 or absent is off. */
+  contextLimit?: () => number;
   /** The github tool's backend, and the state the prompt reports each turn. */
   github?: GitHubController;
   githubState?: () => GitHubState;
@@ -323,16 +325,21 @@ export class AgentRunner {
 
   /**
    * Fold the oldest half of the conversation into a summary when the last
-   * prompt went over the limit from Settings. Runs before a turn (so a
-   * lowered limit applies at once) and after it (so the stored session and
-   * the next prompt are already small). A failed compaction is reported and
-   * the turn goes on with the full history.
+   * prompt went over the deployment's limit. Runs before a turn (so a
+   * session restored from storage is checked too) and after it (so the
+   * stored session and the next prompt are already small). A failed
+   * compaction is reported and the turn goes on with the full history.
    */
   private async compactIfNeeded(session: ProviderSession, signal: AbortSignal) {
-    const limit = settings.contextLimit();
+    const limit = this.options.contextLimit?.() ?? 0;
     if (!limit) return;
     const promptTokens = session.promptTokens();
     if (promptTokens <= limit) return;
+    this.emit({
+      type: "status",
+      id: crypto.randomUUID(),
+      text: `Compacting the conversation (about ${promptTokens.toLocaleString()} tokens)…`,
+    });
     try {
       const result = await session.compact(0.5, signal);
       if (result)

@@ -32,6 +32,10 @@ const publicOrigin = env.SPARKBOX_PUBLIC_ORIGIN ?? ""; // e.g. https://sparkbox.
 // public (it goes into /config.json); the secret stays here.
 const githubClientId = env.SPARKBOX_GITHUB_CLIENT_ID ?? "";
 const githubClientSecret = env.SPARKBOX_GITHUB_CLIENT_SECRET ?? "";
+// Prompt tokens past which the app folds the oldest half of a conversation
+// into a summary, for every provider. Long prompts cost more per token on
+// the free agent's model; 0 turns compaction off.
+const contextLimit = Math.max(0, Number(env.SPARKBOX_CONTEXT_LIMIT ?? 80_000) || 0);
 const previewOrigin = env.SPARKBOX_PREVIEW_ORIGIN ?? (publicOrigin ? `${publicOrigin}:8443` : "");
 const limits = {
   requestsPerTokenPerDay: Number(env.SPARKBOX_REQUESTS_PER_DAY ?? 400),
@@ -138,6 +142,7 @@ async function handleApi(request: IncomingMessage, response: ServerResponse, url
       freeAgent: freeAgentEnabled ? { label: freeLabel, model: freeModel } : null,
       githubClientId: githubClientSecret ? githubClientId : "",
       gitProxyUrl: publicOrigin ? `${publicOrigin}/api/git` : "/api/git",
+      contextLimit,
     });
   }
   if (url.pathname.startsWith("/api/git/")) {

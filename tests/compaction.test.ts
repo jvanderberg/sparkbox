@@ -9,20 +9,8 @@ import {
 } from "../src/agent/compaction.ts";
 import type { Prompt, ProviderSession, TurnContext } from "../src/agent/providers/types.ts";
 import { AgentRunner } from "../src/agent/runner.ts";
-import { settings } from "../src/agent/settings.ts";
 import type { AgentEvent } from "../src/agents/protocol.ts";
 import { MemorySandbox } from "../src/sandbox/memory.ts";
-
-// Settings live in localStorage, which Node does not have.
-const store = new Map<string, string>();
-Object.defineProperty(globalThis, "localStorage", {
-  configurable: true,
-  value: {
-    getItem: (key: string) => store.get(key) ?? null,
-    setItem: (key: string, value: string) => void store.set(key, value),
-    removeItem: (key: string) => void store.delete(key),
-  },
-});
 
 type Msg = { role: "user" | "assistant" | "tool"; text: string };
 
@@ -113,7 +101,6 @@ const waitFor = (events: AgentEvent[], type: string) =>
 
 describe("runner compaction", () => {
   it("compacts before and after a turn whose prompt is over the limit, and says so", async () => {
-    settings.setContextLimit(1000);
     const tokens = { current: 3000 };
     const compactions: number[] = [];
     const runner = new AgentRunner({
@@ -121,6 +108,7 @@ describe("runner compaction", () => {
       sandbox: new MemorySandbox(),
       networkEnabled: () => false,
       previewPort: 8080,
+      contextLimit: () => 1000,
       createSession: () => sizedSession(tokens, compactions),
     });
     const events = collect(runner);
@@ -132,12 +120,13 @@ describe("runner compaction", () => {
       (event) => event.type === "status" && /Compacted/.test(event.text),
     );
     expect(notices).toHaveLength(2);
+    expect(
+      events.filter((event) => event.type === "status" && /^Compacting/.test(event.text)),
+    ).toHaveLength(2);
     expect(notices[0]?.text).toContain("3,000 tokens");
     expect(notices[0]?.text).toContain("1,000-token limit");
-    settings.setContextLimit(0);
   });
-  it("leaves the conversation alone when the limit is off or not reached", async () => {
-    settings.setContextLimit(0);
+  it("leaves the conversation alone when the deployment sets no limit", async () => {
     const compactions: number[] = [];
     const runner = new AgentRunner({
       workspace: "compaction-off",

@@ -29,7 +29,7 @@ Besides each provider's native file and shell tools, the agent gets two tools th
 
 Keys are stored only in this browser and are sent only to that provider. All three providers accept browser requests directly, so no proxy is involved. Usage is billed to the user's own account.
 
-Conversations are kept whole until they pass the **Agent context limit** in Settings (default 80,000 prompt tokens; 0 turns it off). Past it, the oldest half of the turns is folded into a summary the model writes, oldest first, and the chat shows a status line saying so. The check runs before and after each turn using the prompt size the provider reported (or an estimate after a reload), for every provider. Models get slower and pricier as the prompt grows; the free agent's rate steps up past 100,000 tokens.
+Conversations are kept whole until they pass the deployment's context limit (`SPARKBOX_CONTEXT_LIMIT` on the host, published in `/config.json`; 80,000 prompt tokens on sparkbox.fly.dev, 0 turns it off, and a static deployment without a host has none). Past it, the oldest half of the turns is folded into a summary the model writes, oldest first, and the chat shows a status line saying so. The check runs before and after each turn using the prompt size the provider reported (or an estimate after a reload), for every provider. It is a host setting rather than a user one because long prompts cost the host more on the free agent's model, whose rate steps up past 100,000 tokens.
 
 ## Project secrets
 

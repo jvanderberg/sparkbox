@@ -62,7 +62,6 @@ export function App() {
   const [notice, setNotice] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [wisp, setWisp] = useState(settings.wispUrl());
-  const [contextLimit, setContextLimit] = useState(String(settings.contextLimit()));
   const [previewOrigin, setPreviewOrigin] = useState(
     settings.previewOrigin() || defaultPreviewOrigin(),
   );
@@ -214,7 +213,6 @@ export function App() {
           }
           settings.setWispUrl(wisp);
           settings.setPreviewOrigin(previewOrigin);
-          settings.setContextLimit(Number(contextLimit) || 0);
           setSettingsOpen(false);
           setNotice(
             open
@@ -350,22 +348,6 @@ export function App() {
             </>
           )}
         </fieldset>
-        <Field label="Agent context limit (tokens)">
-          <input
-            type="number"
-            inputMode="numeric"
-            min={0}
-            step={1000}
-            value={contextLimit}
-            onChange={(event) => setContextLimit(event.target.value)}
-          />
-        </Field>
-        <p className="muted">
-          When a turn's prompt grows past this, the oldest half of the conversation is folded into a
-          summary written by the model, oldest turns first, before the next request. Models get
-          slower and pricier as the prompt grows (the free agent's rate steps up past 100,000
-          tokens). 0 turns compaction off.
-        </p>
         <Field label="Preview origin">
           <input
             value={previewOrigin}
@@ -698,6 +680,7 @@ function ProjectSession({
             secrets: () => settings.secrets(project.id),
             previewPort,
             previewErrors: () => controller.recentErrors(),
+            contextLimit: () => host.contextLimit,
             preview: controller,
             github: github.controller,
             githubState: github.state,

@@ -12,6 +12,8 @@ export type HostConfig = {
   githubClientId: string;
   /** The host's relay for git pushes and pulls; empty without a host. */
   gitProxyUrl: string;
+  /** Prompt tokens past which the runner folds the oldest half of a conversation; 0 is off. */
+  contextLimit: number;
 };
 
 let loaded: Promise<HostConfig> | null = null;
@@ -31,6 +33,10 @@ export function hostConfig(): Promise<HostConfig> {
             : null,
         githubClientId: typeof data.githubClientId === "string" ? data.githubClientId : "",
         gitProxyUrl: typeof data.gitProxyUrl === "string" ? data.gitProxyUrl : "",
+        contextLimit:
+          typeof data.contextLimit === "number" && data.contextLimit > 0
+            ? Math.floor(data.contextLimit)
+            : 0,
       };
     })
     .catch(() => ({
@@ -40,6 +46,7 @@ export function hostConfig(): Promise<HostConfig> {
       freeAgent: null,
       githubClientId: "",
       gitProxyUrl: "",
+      contextLimit: 0,
     }));
   return loaded;
 }
